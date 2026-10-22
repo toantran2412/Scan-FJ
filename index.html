@@ -87,6 +87,14 @@ footer button{flex:1 1 auto;min-width:0}
 .camfoot button{flex:1 1 0}
 .switch{display:flex;align-items:center;gap:8px;font-size:14px}
 .switch input{width:20px;height:20px;accent-color:var(--accent)}
+.doclist{display:flex;flex-direction:column;gap:10px}
+.doc{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;cursor:pointer;min-width:0}
+.doc .dthumb{width:56px;height:72px;flex:0 0 56px;background:#8a8580;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.doc .dthumb canvas{max-width:100%;max-height:100%}
+.doc .dbody{flex:1;min-width:0}
+.doc .dname{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.doc .dmeta{font-size:13px;color:var(--muted)}
+.doc .ddel{flex:0 0 auto;color:var(--warn);padding:8px 10px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
 </style>
 </head>
@@ -102,15 +110,20 @@ footer button{flex:1 1 auto;min-width:0}
 
 <script>
 'use strict';
-const APP_VERSION='v3 · 22/10 09:45';
+const APP_VERSION='v4 · 22/10 10:20';
 /* ================= state ================= */
 const S = {
-  pages: [],          // {id, src:canvas|null, corners, filter, rot, out:canvas, ocr:''}
-  view: 'list', cur: null, queue: [],
-  docName: 'Scan ' + new Date().toISOString().slice(0,10),
+  docs: [],           // {id, name, created, pages:[{id, src:canvas|null, corners, filter, a4, rot, out:canvas, blob, ocr:''}]}
+  doc: null,          // document being worked on
+  view: 'home', cur: null, queue: [],
   quality: 'medium', autoShot: true,
   stream: null, camTimer: null,
 };
+// S.pages / S.docName always refer to the open document
+Object.defineProperty(S,'pages',{get(){ return S.doc?S.doc.pages:[]; }, set(v){ if(S.doc) S.doc.pages=v; }});
+Object.defineProperty(S,'docName',{get(){ return S.doc?S.doc.name:'Scan'; }, set(v){ if(S.doc) S.doc.name=v; }});
+function newDocName(){ const d=new Date(); const z=n=>String(n).padStart(2,'0'); return `Scan ${z(d.getDate())}-${z(d.getMonth()+1)} ${z(d.getHours())}h${z(d.getMinutes())}`; }
+function createDoc(){ const doc={id:'d'+Date.now(), name:newDocName(), created:Date.now(), pages:[]}; S.docs.unshift(doc); S.doc=doc; return doc; }
 const $ = s => document.querySelector(s);
 const main = $('#main'), footer = $('#footer');
 let toastT;
@@ -119,23 +132,38 @@ function busy(msg){ let b=$('.busy'); if(!msg){ if(b)b.remove(); return; } if(!b
 function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 /* ================= persistence (IndexedDB) ================= */
-const DB = { name:'fresco-scan', store:'pages' };
-function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DB.name,1); r.onupgradeneeded=()=>r.result.createObjectStore(DB.store,{keyPath:'id'}); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
-async function savePages(){
+const DB = { name:'fresco-scan', pages:'pages', docs:'docs' };
+function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DB.name,2);
+  r.onupgradeneeded=()=>{ const db=r.result; if(!db.objectStoreNames.contains(DB.pages)) db.createObjectStore(DB.pages,{keyPath:'id'}); if(!db.objectStoreNames.contains(DB.docs)) db.createObjectStore(DB.docs,{keyPath:'id'}); };
+  r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function pageBlob(p){ if(!p.blob) p.blob=await new Promise(r=>p.out.toBlob(r,'image/jpeg',0.9)); return p.blob; }
+let saveT=null;
+function savePages(){ clearTimeout(saveT); saveT=setTimeout(saveAll,150); }
+async function saveAll(){
   try{
     // encode every page first: an IndexedDB transaction closes if we await inside it
-    const rows=[]; for(let i=0;i<S.pages.length;i++){ const p=S.pages[i]; const blob=await new Promise(r=>p.out.toBlob(r,'image/jpeg',0.9)); rows.push({id:p.id, order:i, blob, ocr:p.ocr||'', filter:p.filter, rot:p.rot}); }
-    const db=await idb(); const tx=db.transaction(DB.store,'readwrite'); const st=tx.objectStore(DB.store); st.clear(); rows.forEach(r=>st.put(r));
+    const pageRows=[], docRows=[];
+    for(let di=0;di<S.docs.length;di++){ const doc=S.docs[di]; docRows.push({id:doc.id, name:doc.name, created:doc.created, order:di});
+      for(let i=0;i<doc.pages.length;i++){ const p=doc.pages[i]; pageRows.push({id:p.id, docId:doc.id, order:i, blob:await pageBlob(p), ocr:p.ocr||'', filter:p.filter, rot:p.rot}); } }
+    const db=await idb(); const tx=db.transaction([DB.pages,DB.docs],'readwrite');
+    const sp=tx.objectStore(DB.pages), sd=tx.objectStore(DB.docs); sp.clear(); sd.clear(); pageRows.forEach(r=>sp.put(r)); docRows.forEach(r=>sd.put(r));
     await new Promise((res,rej)=>{ tx.oncomplete=res; tx.onerror=()=>rej(tx.error); });
-    try{ localStorage.setItem('fresco-scan-doc', JSON.stringify({docName:S.docName, quality:S.quality, autoShot:S.autoShot})); }catch(e){}
+    try{ localStorage.setItem('fresco-scan-doc', JSON.stringify({quality:S.quality, autoShot:S.autoShot})); }catch(e){}
   }catch(e){ console.warn('save failed',e); }
 }
-async function loadPages(){
-  try{ const s=JSON.parse(localStorage.getItem('fresco-scan-doc')||'{}'); if(s.docName)S.docName=s.docName; if(s.quality)S.quality=s.quality; if(typeof s.autoShot==='boolean')S.autoShot=s.autoShot; }catch(e){}
-  try{ const db=await idb(); const rows=await new Promise((res,rej)=>{ const r=db.transaction(DB.store).objectStore(DB.store).getAll(); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
-    rows.sort((a,b)=>a.order-b.order);
-    for(const r of rows){ const bmp=await createImageBitmap(r.blob); const c=document.createElement('canvas'); c.width=bmp.width; c.height=bmp.height; c.getContext('2d').drawImage(bmp,0,0); bmp.close&&bmp.close();
-      S.pages.push({id:r.id, src:null, corners:null, filter:r.filter, rot:r.rot, out:c, ocr:r.ocr||''}); }
+async function loadAll(){
+  let legacyName=null;
+  try{ const s=JSON.parse(localStorage.getItem('fresco-scan-doc')||'{}'); if(s.docName)legacyName=s.docName; if(s.quality)S.quality=s.quality; if(typeof s.autoShot==='boolean')S.autoShot=s.autoShot; }catch(e){}
+  try{ const db=await idb(); const get=st=>new Promise((res,rej)=>{ const r=db.transaction(st).objectStore(st).getAll(); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
+    const docRows=await get(DB.docs), pageRows=await get(DB.pages);
+    docRows.sort((a,b)=>a.order-b.order); pageRows.sort((a,b)=>a.order-b.order);
+    const byId={}; for(const r of docRows){ const doc={id:r.id,name:r.name,created:r.created,pages:[]}; byId[r.id]=doc; S.docs.push(doc); }
+    let legacy=null;
+    for(const r of pageRows){ const bmp=await createImageBitmap(r.blob); const c=document.createElement('canvas'); c.width=bmp.width; c.height=bmp.height; c.getContext('2d').drawImage(bmp,0,0); bmp.close&&bmp.close();
+      const page={id:r.id, src:null, corners:null, filter:r.filter, rot:r.rot, out:c, blob:r.blob, ocr:r.ocr||''};
+      let doc=byId[r.docId]; if(!doc){ if(!legacy){ legacy={id:'d-legacy', name:legacyName||'Scan cũ', created:Date.now(), pages:[]}; S.docs.push(legacy); byId[legacy.id]=legacy; } doc=legacy; }
+      doc.pages.push(page); }
+    if(legacy) savePages();
   }catch(e){ console.warn('load failed',e); }
 }
 
@@ -173,6 +201,31 @@ function regionCorners(src){
       if(y>0&&m[i-w]&&!lab[i-w]){lab[i-w]=id;stack[sp++]=i-w;} if(y<h-1&&m[i+w]&&!lab[i+w]){lab[i+w]=id;stack[sp++]=i+w;} }
     if(size>bestSize){bestSize=size;bestId=id;} }
   if(bestSize < n*0.12) return null;
+  const sx=W/w, sy=H/h;
+  // --- method A: convex hull of the region, simplified to its 4 corners (handles tilted paper) ---
+  try{
+    const bp=[]; for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const i=y*w+x; if(lab[i]!==bestId) continue;
+      if(x===0||y===0||x===w-1||y===h-1||lab[i-1]!==bestId||lab[i+1]!==bestId||lab[i-w]!==bestId||lab[i+w]!==bestId) bp.push({x,y}); }
+    const hull=convexHull(bp);
+    if(hull.length>=4){
+      let poly=hull, eps=1.5; while(poly.length>8 && eps<Math.max(w,h)){ poly=dpClosed(hull,eps); eps*=1.5; }
+      if(poly.length>=4){
+        const area=q=>Math.abs((q[0].x*q[1].y-q[1].x*q[0].y)+(q[1].x*q[2].y-q[2].x*q[1].y)+(q[2].x*q[3].y-q[3].x*q[2].y)+(q[3].x*q[0].y-q[0].x*q[3].y))/2;
+        let bq=null,ba=0; const m=poly.length;
+        for(let a=0;a<m;a++) for(let b=a+1;b<m;b++) for(let c=b+1;c<m;c++) for(let d=c+1;d<m;d++){ const q=[poly[a],poly[b],poly[c],poly[d]]; const ar=area(q); if(ar>ba){ba=ar;bq=q;} }
+        if(bq && ba>=n*0.12 && ba>=bestSize*0.8){
+          const cx=(bq[0].x+bq[1].x+bq[2].x+bq[3].x)/4, cy=(bq[0].y+bq[1].y+bq[2].y+bq[3].y)/4;
+          bq.sort((p1,p2)=>Math.atan2(p1.y-cy,p1.x-cx)-Math.atan2(p2.y-cy,p2.x-cx)); // tl,tr,br,bl in image coordinates
+          const side=(p1,p2)=>Math.hypot(p1.x-p2.x,p1.y-p2.y); const minSide=Math.min(side(bq[0],bq[1]),side(bq[1],bq[2]),side(bq[2],bq[3]),side(bq[3],bq[0]));
+          if(minSide>=Math.min(w,h)*0.15){
+            // push each corner half a pixel outward so the paper edge is not shaved off
+            return bq.map(q=>({x:Math.max(0,Math.min(W,(q.x+(q.x>cx?1:-1)*0.5)*sx)), y:Math.max(0,Math.min(H,(q.y+(q.y>cy?1:-1)*0.5)*sy))}));
+          }
+        }
+      }
+    }
+  }catch(e){}
+  // --- method B: fit the 4 boundary lines of the region (works when the paper is nearly upright) ---
   let x0=w,x1=0,y0=h,y1=0; for(let i=0;i<n;i++){ if(lab[i]!==bestId) continue; const x=i%w,y=(i-x)/w; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
   if(x1-x0<w*.2||y1-y0<h*.2) return null;
   const L=[],R=[],T=[],B=[];
@@ -189,7 +242,24 @@ function regionCorners(src){
   let q=[X(tl,ll),X(tl,rl),X(bl,rl),X(bl,ll)].map(p=>({x:Math.max(0,Math.min(w,p.x)),y:Math.max(0,Math.min(h,p.y))}));
   const area=Math.abs((q[0].x*q[1].y-q[1].x*q[0].y)+(q[1].x*q[2].y-q[2].x*q[1].y)+(q[2].x*q[3].y-q[3].x*q[2].y)+(q[3].x*q[0].y-q[0].x*q[3].y))/2;
   if(area < n*0.12) return null;
-  const sx=W/w, sy=H/h; return q.map(p=>({x:p.x*sx,y:p.y*sy}));
+  return q.map(p=>({x:p.x*sx,y:p.y*sy}));
+}
+// monotone-chain convex hull, counter-clockwise in screen coordinates
+function convexHull(pts){
+  const P=pts.slice().sort((a,b)=>a.x-b.x||a.y-b.y); if(P.length<3) return P;
+  const cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);
+  const lower=[]; for(const p of P){ while(lower.length>=2&&cross(lower[lower.length-2],lower[lower.length-1],p)<=0) lower.pop(); lower.push(p); }
+  const upper=[]; for(let i=P.length-1;i>=0;i--){ const p=P[i]; while(upper.length>=2&&cross(upper[upper.length-2],upper[upper.length-1],p)<=0) upper.pop(); upper.push(p); }
+  lower.pop(); upper.pop(); return lower.concat(upper);
+}
+// Douglas-Peucker on a closed polygon: split at the two farthest points, simplify both chains
+function dpClosed(poly,eps){
+  let a=0,b=0,best=-1; for(let i=0;i<poly.length;i++) for(let j=i+1;j<poly.length;j++){ const d=(poly[i].x-poly[j].x)**2+(poly[i].y-poly[j].y)**2; if(d>best){best=d;a=i;b=j;} }
+  const chain1=poly.slice(a,b+1), chain2=poly.slice(b).concat(poly.slice(0,a+1));
+  const dp=(pts)=>{ if(pts.length<3) return pts; const s=pts[0],e=pts[pts.length-1]; let idx=-1,dm=0; const L=Math.hypot(e.x-s.x,e.y-s.y)||1e-9;
+    for(let i=1;i<pts.length-1;i++){ const p=pts[i]; const d=Math.abs((e.x-s.x)*(s.y-p.y)-(s.x-p.x)*(e.y-s.y))/L; if(d>dm){dm=d;idx=i;} }
+    if(dm>eps){ const l=dp(pts.slice(0,idx+1)), r=dp(pts.slice(idx)); return l.slice(0,-1).concat(r); } return [s,e]; };
+  const r1=dp(chain1), r2=dp(chain2); return r1.slice(0,-1).concat(r2.slice(0,-1));
 }
 
 /* ================= perspective warp, filters, rotation ================= */
@@ -245,7 +315,7 @@ function applyFilter(c, filter){
   ctx.putImageData(id,0,0); return c;
 }
 function rotateCanvas(c, rot){ if(!rot) return c; const r=document.createElement('canvas'); const swap=rot%180!==0; r.width=swap?c.height:c.width; r.height=swap?c.width:c.height; const ctx=r.getContext('2d'); ctx.translate(r.width/2,r.height/2); ctx.rotate(rot*Math.PI/180); ctx.drawImage(c,-c.width/2,-c.height/2); return r; }
-function process(p){ if(!p.src){ return p.out; } p.out=rotateCanvas(applyFilter(warp(p.src,p.corners,p.a4),p.filter),p.rot); return p.out; }
+function process(p){ if(!p.src){ return p.out; } p.out=rotateCanvas(applyFilter(warp(p.src,p.corners,p.a4),p.filter),p.rot); p.blob=null; return p.out; }
 
 /* ================= adding pages ================= */
 async function addCanvas(src){ const p={id:Date.now()+Math.random(), src, corners:autoCorners(src), filter:'enhance', a4:true, rot:0, out:null, ocr:'', _new:true}; process(p); return p; }
@@ -260,25 +330,53 @@ $('#fileLib').addEventListener('change',e=>{ addFiles(e.target.files); e.target.
 
 /* ================= render ================= */
 function render(){
-  stopCamera();
+  pauseCamera(); if(S.view==='home') stopCamera();
   main.className='';
-  $('#btnBack').hidden = S.view==='list';
-  ({list:renderList, edit:renderEdit, confirm:renderConfirm, save:renderSave, ocr:renderOcr, camera:renderCamera})[S.view]();
+  $('#btnBack').hidden = S.view==='home';
+  if(S.view!=='home' && !S.doc) S.view='home';
+  ({home:renderHome, list:renderList, edit:renderEdit, confirm:renderConfirm, save:renderSave, ocr:renderOcr, camera:renderCamera})[S.view]();
 }
-$('#btnBack').onclick=()=>{ S.queue=[]; S.cur=null; S.view='list'; render(); };
+$('#btnBack').onclick=()=>{ S.queue=[]; S.cur=null; if(S.view==='list'){ S.view='home'; } else S.view='list'; render(); };
+
+/* ================= home: list of documents ================= */
+function fmtDate(t){ const d=new Date(t); const z=n=>String(n).padStart(2,'0'); return `${z(d.getDate())}/${z(d.getMonth()+1)} ${z(d.getHours())}:${z(d.getMinutes())}`; }
+function renderHome(){
+  $('#btnBack').hidden=true; $('#btnBack').textContent='‹ Tài liệu';
+  $('#title').textContent='Scan FJ'; $('#subtitle').textContent=S.docs.length?S.docs.length+' tài liệu':'Chụp tài liệu, cắt thẳng, xuất PDF';
+  main.innerHTML='';
+  if(!S.docs.length){
+    main.innerHTML=`<div class="empty" style="padding-bottom:10px"><strong>Chưa có tài liệu nào</strong>Bấm <b>Tài liệu mới</b> để bắt đầu chụp. Mỗi bộ giấy là một tài liệu riêng, xuất ra một file PDF riêng.</div>`;
+  } else {
+    const grid=document.createElement('div'); grid.className='doclist';
+    S.docs.forEach((doc,i)=>{
+      const el=document.createElement('div'); el.className='doc';
+      el.innerHTML=`<div class="dthumb"></div><div class="dbody"><div class="dname"></div><div class="dmeta">${doc.pages.length} trang · ${fmtDate(doc.created)}</div></div><button class="ghost ddel" data-a="del" title="Xoá">✕</button>`;
+      el.querySelector('.dname').textContent=doc.name;
+      const p0=doc.pages[0]; if(p0){ const th=document.createElement('canvas'); const k=Math.min(1,160/Math.max(p0.out.width,p0.out.height)); th.width=p0.out.width*k; th.height=p0.out.height*k; th.getContext('2d').drawImage(p0.out,0,0,th.width,th.height); el.querySelector('.dthumb').appendChild(th); }
+      el.onclick=e=>{ if(e.target.dataset.a==='del'){ const b=e.target; if(b.dataset.arm){ S.docs.splice(i,1); savePages(); render(); toast('Đã xoá "'+doc.name+'"'); } else { b.dataset.arm='1'; b.textContent='Xoá?'; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.arm; b.textContent='✕'; } },3000); } return; }
+        S.doc=doc; S.view='list'; render(); };
+      grid.appendChild(el);
+    });
+    main.appendChild(grid);
+  }
+  const ver=document.createElement('p'); ver.className='hint'; ver.style.textAlign='center'; ver.textContent='Scan FJ '+APP_VERSION; main.appendChild(ver);
+  footer.innerHTML=`<button class="primary" id="bNew">＋ Tài liệu mới</button>`;
+  $('#bNew').onclick=()=>{ createDoc(); savePages(); if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){ S.view='camera'; render(); } else { S.view='list'; render(); $('#fileCam').click(); } };
+}
 const FILTERS=[['enhance','Rõ nét'],['bw','Đen trắng'],['gray','Xám'],['none','Gốc']];
 const chipsHtml=(id,cur)=>`<div class="chips" id="${id}">${FILTERS.map(([k,l])=>`<button data-f="${k}" aria-pressed="${cur===k}">${l}</button>`).join('')}</div>`;
 
 function renderList(){
-  $('#title').textContent='Scan FJ'; $('#subtitle').textContent=S.pages.length?S.pages.length+' trang · '+S.docName:'Chụp tài liệu, cắt thẳng, xuất PDF';
+  $('#btnBack').textContent='‹ Tài liệu';
+  $('#title').textContent=S.docName; $('#subtitle').textContent=S.pages.length?S.pages.length+' trang':'Chưa có trang nào';
   main.innerHTML='';
+  const sec=document.createElement('div');
+  sec.innerHTML=`<div class="section" style="margin-top:0"><h2>Tên tài liệu</h2><input type="text" id="docName"></div>`+(S.pages.length?`<div class="section"><h2>Các trang</h2><div class="grid" id="grid"></div></div>`:'');
+  main.appendChild(sec);
+  const inp=$('#docName'); inp.value=S.docName; inp.oninput=()=>{S.docName=inp.value||'Scan'; $('#title').textContent=S.docName; savePages();};
   if(!S.pages.length){
-    main.innerHTML=`<div class="empty" style="padding-bottom:10px"><strong>Chưa có trang nào</strong>Bấm <b>Chụp</b> để mở camera: đưa tờ giấy vào khung, app tự dò mép và tự chụp khi giấy đứng yên.<br><span class="hint">Mỗi trang được cắt thẳng, lọc rõ chữ, rồi hỏi bạn có giữ không. Xong thì ghép thành PDF để lưu hoặc gửi Zalo / Mail.</span></div>`;
+    const e=document.createElement('div'); e.className='empty'; e.innerHTML=`<strong>Chưa có trang nào</strong>Bấm <b>Chụp</b> để mở camera: đưa tờ giấy vào khung, app tự dò mép và tự chụp khi giấy đứng yên.<br><span class="hint">Mỗi trang được cắt thẳng, lọc rõ chữ, rồi hỏi bạn có giữ không. Xong thì ghép thành PDF để lưu hoặc gửi Zalo / Mail.</span>`; main.appendChild(e);
   } else {
-    const sec=document.createElement('div');
-    sec.innerHTML=`<div class="section" style="margin-top:0"><h2>Tên tài liệu</h2><input type="text" id="docName"></div><div class="section"><h2>Các trang</h2><div class="grid" id="grid"></div></div>`;
-    main.appendChild(sec);
-    const inp=$('#docName'); inp.value=S.docName; inp.oninput=()=>{S.docName=inp.value||'Scan'; $('#subtitle').textContent=S.pages.length+' trang · '+S.docName; savePages();};
     const grid=$('#grid');
     S.pages.forEach((p,i)=>{
       const el=document.createElement('div'); el.className='page'+(p.ocr?' ocr-done':'');
@@ -296,16 +394,17 @@ function renderList(){
     });
     const note=document.createElement('p'); note.className='hint'; note.textContent='Các trang được giữ lại trên máy này kể cả khi đóng app. Bấm "Lưu / chia sẻ" để xuất PDF.'; main.appendChild(note);
   }
-  const ver=document.createElement('p'); ver.className='hint'; ver.style.textAlign='center'; ver.textContent='Scan FJ '+APP_VERSION; main.appendChild(ver);
-  footer.innerHTML=`<button class="primary" id="bCam">📷 Chụp</button><button id="bLib">Thư viện</button>${S.pages.length?`<button class="primary" id="bPdf">Lưu / chia sẻ (${S.pages.length})</button><button id="bClear" style="flex:0 0 auto;color:var(--warn)">Xoá hết</button>`:''}`;
+  footer.innerHTML=`<button class="primary" id="bCam">📷 Chụp</button><button id="bLib">Thư viện</button>${S.pages.length?`<button class="primary" id="bPdf">Lưu / chia sẻ (${S.pages.length})</button><button id="bClear" style="flex:0 0 auto;color:var(--warn)">Xoá hết trang</button>`:''}`;
   $('#bCam').onclick=()=>{ if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){ S.view='camera'; render(); } else $('#fileCam').click(); };
   $('#bLib').onclick=()=>$('#fileLib').click();
   const bp=$('#bPdf'); if(bp) bp.onclick=()=>{S.view='save';render();};
-  const bc=$('#bClear'); if(bc) bc.onclick=()=>{ if(bc.dataset.arm){ S.pages=[]; savePages(); render(); toast('Đã xoá tất cả'); } else { bc.dataset.arm='1'; bc.textContent='Chắc chắn xoá?'; setTimeout(()=>{ if(bc.isConnected){ delete bc.dataset.arm; bc.textContent='Xoá hết'; } },3000); } };
+  const bc=$('#bClear'); if(bc) bc.onclick=()=>{ if(bc.dataset.arm){ S.pages=[]; savePages(); render(); toast('Đã xoá tất cả'); } else { bc.dataset.arm='1'; bc.textContent='Chắc chắn xoá?'; setTimeout(()=>{ if(bc.isConnected){ delete bc.dataset.arm; bc.textContent='Xoá hết trang'; } },3000); } };
 }
 
 /* ================= live camera with auto capture ================= */
-function stopCamera(){ if(S.camTimer){ clearInterval(S.camTimer); S.camTimer=null; } if(S.stream){ S.stream.getTracks().forEach(t=>t.stop()); S.stream=null; } }
+// pause = stop analysing but keep the camera stream alive, so the next capture needs no new permission prompt
+function pauseCamera(){ if(S.camTimer){ clearInterval(S.camTimer); S.camTimer=null; } }
+function stopCamera(){ pauseCamera(); if(S.stream){ S.stream.getTracks().forEach(t=>t.stop()); S.stream=null; } }
 async function renderCamera(){
   $('#title').textContent='Chụp'; $('#subtitle').textContent='Đưa giấy vào khung, giữ yên máy';
   main.className='cam';
@@ -315,7 +414,9 @@ async function renderCamera(){
   $('#bFile').onclick=()=>$('#fileLib').click();
   const vid=$('#vid'), ov=$('#ov'), cs=$('#cs');
   try{
-    S.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:4032}, height:{ideal:3024}}, audio:false});
+    if(!(S.stream && S.stream.active && S.stream.getVideoTracks().some(t=>t.readyState==='live'))){
+      S.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:4032}, height:{ideal:3024}}, audio:false});
+    }
     vid.srcObject=S.stream; await vid.play();
   }catch(e){ cs.textContent='Không mở được camera ('+(e.name||e)+'). Dùng nút "Ảnh có sẵn" hoặc cho phép camera trong cài đặt trình duyệt.'; cs.classList.remove('ok'); $('#shot').onclick=()=>$('#fileCam').click(); return; }
   const small=document.createElement('canvas'); const sctx=small.getContext('2d',{willReadFrequently:true});
@@ -323,7 +424,7 @@ async function renderCamera(){
   const capture=async()=>{
     if(counting) return; counting=true;
     const full=document.createElement('canvas'); full.width=vid.videoWidth; full.height=vid.videoHeight; full.getContext('2d').drawImage(vid,0,0);
-    stopCamera(); busy('Đang cắt và làm thẳng…');
+    pauseCamera(); busy('Đang cắt và làm thẳng…');
     try{ const p=await addCanvas(full); busy(null); S.queue.push(p); nextConfirm(); }catch(e){ busy(null); toast('Lỗi xử lý ảnh: '+(e.message||e)); S.view='list'; render(); }
   };
   $('#shot').onclick=capture;
@@ -485,7 +586,8 @@ function download(blob,name){ const u=URL.createObjectURL(blob); const a=documen
 /* ================= boot ================= */
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
 window.addEventListener('pagehide',stopCamera);
-(async()=>{ await loadPages(); render(); })();
+document.addEventListener('visibilitychange',()=>{ if(document.hidden){ stopCamera(); } else if(S.view==='camera'){ render(); } });
+(async()=>{ await loadAll(); render(); })();
 </script>
 </body>
 </html>
