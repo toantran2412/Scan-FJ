@@ -102,6 +102,7 @@ footer button{flex:1 1 auto;min-width:0}
 
 <script>
 'use strict';
+const APP_VERSION='v3 · 22/10 09:45';
 /* ================= state ================= */
 const S = {
   pages: [],          // {id, src:canvas|null, corners, filter, rot, out:canvas, ocr:''}
@@ -198,12 +199,12 @@ function squareToQuad(p){
   const g=(dx3*dy2-dx2*dy3)/det, h=(dx1*dy3-dx3*dy1)/det;
   return [x1-x0+g*x1, x3-x0+h*x3, x0, y1-y0+g*y1, y3-y0+h*y3, y0, g, h, 1];
 }
-function warp(src, corners){
+function warp(src, corners, a4){
   const dist=(p,q)=>Math.hypot(p.x-q.x,p.y-q.y);
   let W=Math.round(Math.max(dist(corners[0],corners[1]),dist(corners[3],corners[2]))), H=Math.round(Math.max(dist(corners[0],corners[3]),dist(corners[1],corners[2])));
   // a sheet photographed at an angle comes out with a wrong ratio; when it is close to A4, snap to A4 (1:1.414)
   const ar=W/H; const A4=1/Math.SQRT2;
-  if(ar>0.58&&ar<0.86) H=Math.round(W/A4); else if(ar>1.16&&ar<1.72) W=Math.round(H/A4);
+  if(a4!==false){ if(ar>0.5&&ar<0.95) H=Math.round(W/A4); else if(ar>1.05&&ar<2.0) W=Math.round(H/A4); }
   const k=Math.min(1,2600/Math.max(W,H)); W=Math.max(2,Math.round(W*k)); H=Math.max(2,Math.round(H*k));
   const sd=src.getContext('2d',{willReadFrequently:true}).getImageData(0,0,src.width,src.height).data; const sw=src.width, sh=src.height;
   const out=document.createElement('canvas'); out.width=W; out.height=H; const octx=out.getContext('2d'); const od=octx.createImageData(W,H); const o=od.data; const M=squareToQuad(corners);
@@ -244,10 +245,10 @@ function applyFilter(c, filter){
   ctx.putImageData(id,0,0); return c;
 }
 function rotateCanvas(c, rot){ if(!rot) return c; const r=document.createElement('canvas'); const swap=rot%180!==0; r.width=swap?c.height:c.width; r.height=swap?c.width:c.height; const ctx=r.getContext('2d'); ctx.translate(r.width/2,r.height/2); ctx.rotate(rot*Math.PI/180); ctx.drawImage(c,-c.width/2,-c.height/2); return r; }
-function process(p){ if(!p.src){ return p.out; } p.out=rotateCanvas(applyFilter(warp(p.src,p.corners),p.filter),p.rot); return p.out; }
+function process(p){ if(!p.src){ return p.out; } p.out=rotateCanvas(applyFilter(warp(p.src,p.corners,p.a4),p.filter),p.rot); return p.out; }
 
 /* ================= adding pages ================= */
-async function addCanvas(src){ const p={id:Date.now()+Math.random(), src, corners:autoCorners(src), filter:'enhance', rot:0, out:null, ocr:'', _new:true}; process(p); return p; }
+async function addCanvas(src){ const p={id:Date.now()+Math.random(), src, corners:autoCorners(src), filter:'enhance', a4:true, rot:0, out:null, ocr:'', _new:true}; process(p); return p; }
 async function addFiles(files){
   if(!files||!files.length) return; busy('Đang đọc ảnh…'); const added=[];
   try{ for(const f of files){ added.push(await addCanvas(await loadFile(f))); } }catch(e){ busy(null); toast('Không đọc được ảnh: '+(e.message||e)); return; }
@@ -272,7 +273,7 @@ function renderList(){
   $('#title').textContent='Scan FJ'; $('#subtitle').textContent=S.pages.length?S.pages.length+' trang · '+S.docName:'Chụp tài liệu, cắt thẳng, xuất PDF';
   main.innerHTML='';
   if(!S.pages.length){
-    main.innerHTML=`<div class="empty"><strong>Chưa có trang nào</strong>Bấm <b>Chụp</b> để mở camera: đưa tờ giấy vào khung, app tự dò mép và tự chụp khi giấy đứng yên.<br><span class="hint">Mỗi trang được cắt thẳng, lọc rõ chữ, rồi hỏi bạn có giữ không. Xong thì ghép thành PDF để lưu hoặc gửi Zalo / Mail.</span></div>`;
+    main.innerHTML=`<div class="empty" style="padding-bottom:10px"><strong>Chưa có trang nào</strong>Bấm <b>Chụp</b> để mở camera: đưa tờ giấy vào khung, app tự dò mép và tự chụp khi giấy đứng yên.<br><span class="hint">Mỗi trang được cắt thẳng, lọc rõ chữ, rồi hỏi bạn có giữ không. Xong thì ghép thành PDF để lưu hoặc gửi Zalo / Mail.</span></div>`;
   } else {
     const sec=document.createElement('div');
     sec.innerHTML=`<div class="section" style="margin-top:0"><h2>Tên tài liệu</h2><input type="text" id="docName"></div><div class="section"><h2>Các trang</h2><div class="grid" id="grid"></div></div>`;
@@ -295,6 +296,7 @@ function renderList(){
     });
     const note=document.createElement('p'); note.className='hint'; note.textContent='Các trang được giữ lại trên máy này kể cả khi đóng app. Bấm "Lưu / chia sẻ" để xuất PDF.'; main.appendChild(note);
   }
+  const ver=document.createElement('p'); ver.className='hint'; ver.style.textAlign='center'; ver.textContent='Scan FJ '+APP_VERSION; main.appendChild(ver);
   footer.innerHTML=`<button class="primary" id="bCam">📷 Chụp</button><button id="bLib">Thư viện</button>${S.pages.length?`<button class="primary" id="bPdf">Lưu / chia sẻ (${S.pages.length})</button><button id="bClear" style="flex:0 0 auto;color:var(--warn)">Xoá hết</button>`:''}`;
   $('#bCam').onclick=()=>{ if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){ S.view='camera'; render(); } else $('#fileCam').click(); };
   $('#bLib').onclick=()=>$('#fileLib').click();
@@ -353,10 +355,13 @@ function renderConfirm(){
   const p=S.cur, left=S.queue.length;
   $('#title').textContent='Giữ trang này?'; $('#subtitle').textContent='Đã tự dò mép và làm thẳng'+(left?` · còn ${left} ảnh chờ`:'');
   main.innerHTML=`<div class="preview-wrap"><canvas id="pv"></canvas></div><p class="kv" id="pvinfo"></p>
-    <div class="section"><h2>Bộ lọc</h2>${chipsHtml('chips',p.filter)}</div><p class="hint">Mép dò chưa đúng? Bấm <b>Chỉnh góc</b> để kéo tay 4 góc.</p>`;
+    <div class="section"><h2>Bộ lọc</h2>${chipsHtml('chips',p.filter)}</div>
+    <div class="section"><h2>Khổ giấy</h2><div class="chips" id="a4chips"><button data-a4="1" aria-pressed="${p.a4!==false}">Ép khổ A4, full trang</button><button data-a4="0" aria-pressed="${p.a4===false}">Giữ tỉ lệ gốc (hoá đơn, giấy nhỏ)</button></div></div>
+    <p class="hint">Mép dò chưa đúng? Bấm <b>Chỉnh góc</b> để kéo tay 4 góc.</p>`;
   const show=()=>{ const pv=$('#pv'); const kk=Math.min(1,800/Math.max(p.out.width,p.out.height)); pv.width=p.out.width*kk; pv.height=p.out.height*kk; pv.getContext('2d').drawImage(p.out,0,0,pv.width,pv.height); $('#pvinfo').textContent=`Sau cắt: ${p.out.width} × ${p.out.height} px`; };
   show();
   $('#chips').onclick=e=>{ const f=e.target.dataset.f; if(!f) return; p.filter=f; [...$('#chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.f===f)); process(p); show(); };
+  $('#a4chips').onclick=e=>{ const v=e.target.dataset.a4; if(v===undefined) return; p.a4=v==='1'; [...$('#a4chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.a4===v)); process(p); show(); };
   footer.innerHTML=`<button id="bRetake" style="color:var(--warn)">Bỏ</button><button id="bEdit">Chỉnh góc</button><button class="primary" id="bKeep">Giữ trang</button><button class="primary" id="bKeepNext">Giữ &amp; chụp tiếp</button>`;
   const keep=()=>{ delete p._new; S.pages.push(p); savePages(); toast('Đã thêm trang '+S.pages.length); };
   $('#bKeep').onclick=()=>{ keep(); nextConfirm(); };
