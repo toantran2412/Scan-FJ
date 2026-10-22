@@ -110,7 +110,7 @@ footer button{flex:1 1 auto;min-width:0}
 
 <script>
 'use strict';
-const APP_VERSION='v6 · 22/10 10:30';
+const APP_VERSION='v7 · 22/10 10:40';
 /* ================= state ================= */
 const S = {
   docs: [],           // {id, name, created, pages:[{id, src:canvas|null, corners, filter, a4, rot, out:canvas, blob, ocr:''}]}
@@ -122,7 +122,8 @@ const S = {
 // S.pages / S.docName always refer to the open document
 Object.defineProperty(S,'pages',{get(){ return S.doc?S.doc.pages:[]; }, set(v){ if(S.doc) S.doc.pages=v; }});
 Object.defineProperty(S,'docName',{get(){ return S.doc?S.doc.name:'Scan'; }, set(v){ if(S.doc) S.doc.name=v; }});
-function newDocName(){ const d=new Date(); const z=n=>String(n).padStart(2,'0'); return `Scan ${z(d.getDate())}-${z(d.getMonth()+1)} ${z(d.getHours())}h${z(d.getMinutes())}`; }
+function newDocName(){ const d=new Date(); const z=n=>String(n).padStart(2,'0'); const base=`Scan ${z(d.getDate())}-${z(d.getMonth()+1)} ${z(d.getHours())}h${z(d.getMinutes())}`;
+  let name=base, k=2; while(S.docs.some(x=>x.name===name)) name=`${base} (${k++})`; return name; }
 function createDoc(){ const doc={id:'d'+Date.now(), name:newDocName(), created:Date.now(), pages:[]}; S.docs.unshift(doc); S.doc=doc; return doc; }
 const $ = s => document.querySelector(s);
 const main = $('#main'), footer = $('#footer');
@@ -139,7 +140,9 @@ function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DB.name,2
 async function pageBlob(p){ if(!p.blob) p.blob=await new Promise(r=>p.out.toBlob(r,'image/jpeg',0.9)); return p.blob; }
 let saveT=null;
 function savePages(){ clearTimeout(saveT); saveT=setTimeout(saveAll,150); }
-async function saveAll(){
+let saving=null;
+function saveAll(){ saving=(saving||Promise.resolve()).then(saveAllNow,saveAllNow); return saving; }
+async function saveAllNow(){
   try{
     // encode every page first: an IndexedDB transaction closes if we await inside it
     const pageRows=[], docRows=[];
@@ -353,7 +356,7 @@ function renderHome(){
       el.innerHTML=`<div class="dthumb"></div><div class="dbody"><div class="dname"></div><div class="dmeta">${doc.pages.length} trang · ${fmtDate(doc.created)}</div></div><button class="ghost ddel" data-a="del" title="Xoá">✕</button>`;
       el.querySelector('.dname').textContent=doc.name;
       const p0=doc.pages[0]; if(p0){ const th=document.createElement('canvas'); const k=Math.min(1,160/Math.max(p0.out.width,p0.out.height)); th.width=p0.out.width*k; th.height=p0.out.height*k; th.getContext('2d').drawImage(p0.out,0,0,th.width,th.height); el.querySelector('.dthumb').appendChild(th); }
-      el.onclick=e=>{ if(e.target.dataset.a==='del'){ const b=e.target; if(b.dataset.arm){ S.docs.splice(i,1); savePages(); render(); toast('Đã xoá "'+doc.name+'"'); } else { b.dataset.arm='1'; b.textContent='Xoá?'; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.arm; b.textContent='✕'; } },3000); } return; }
+      el.onclick=e=>{ if(e.target.dataset.a==='del'){ const b=e.target; if(b.dataset.arm){ S.docs.splice(i,1); saveAll(); render(); toast('Đã xoá "'+doc.name+'"'); } else { b.dataset.arm='1'; b.textContent='Xoá?'; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.arm; b.textContent='✕'; } },3000); } return; }
         S.doc=doc; S.view='list'; render(); };
       grid.appendChild(el);
     });
@@ -361,7 +364,7 @@ function renderHome(){
   }
   const ver=document.createElement('p'); ver.className='hint'; ver.style.textAlign='center'; ver.textContent='Scan FJ '+APP_VERSION; main.appendChild(ver);
   footer.innerHTML=`<button class="primary" id="bNew">＋ Tài liệu mới</button>`;
-  $('#bNew').onclick=()=>{ createDoc(); savePages(); if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){ S.view='camera'; render(); } else { S.view='list'; render(); $('#fileCam').click(); } };
+  $('#bNew').onclick=()=>{ createDoc(); saveAll(); if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){ S.view='camera'; render(); } else { S.view='list'; render(); $('#fileCam').click(); } };
 }
 const FILTERS=[['enhance','Rõ nét'],['bw','Đen trắng'],['gray','Xám'],['none','Gốc']];
 const chipsHtml=(id,cur)=>`<div class="chips" id="${id}">${FILTERS.map(([k,l])=>`<button data-f="${k}" aria-pressed="${cur===k}">${l}</button>`).join('')}</div>`;
@@ -386,9 +389,9 @@ function renderList(){
       el.querySelector('.thumb').appendChild(th);
       el.onclick=e=>{ const a=e.target.dataset.a; if(!a) return;
         if(a==='edit'){ S.cur=p; S.view='edit'; render(); }
-        else if(a==='up'){ S.pages.splice(i,1); S.pages.splice(i-1,0,p); savePages(); render(); }
-        else if(a==='down'){ S.pages.splice(i,1); S.pages.splice(i+1,0,p); savePages(); render(); }
-        else if(a==='del'){ S.pages.splice(i,1); savePages(); render(); toast('Đã xoá trang '+(i+1)); }
+        else if(a==='up'){ S.pages.splice(i,1); S.pages.splice(i-1,0,p); saveAll(); render(); }
+        else if(a==='down'){ S.pages.splice(i,1); S.pages.splice(i+1,0,p); saveAll(); render(); }
+        else if(a==='del'){ S.pages.splice(i,1); saveAll(); render(); toast('Đã xoá trang '+(i+1)); }
         else if(a==='ocr'){ S.cur=p; S.view='ocr'; render(); } };
       grid.appendChild(el);
     });
@@ -398,7 +401,7 @@ function renderList(){
   $('#bCam').onclick=()=>{ if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){ S.view='camera'; render(); } else $('#fileCam').click(); };
   $('#bLib').onclick=()=>$('#fileLib').click();
   const bp=$('#bPdf'); if(bp) bp.onclick=()=>{S.view='save';render();};
-  const bc=$('#bClear'); if(bc) bc.onclick=()=>{ if(bc.dataset.arm){ S.pages=[]; savePages(); render(); toast('Đã xoá tất cả'); } else { bc.dataset.arm='1'; bc.textContent='Chắc chắn xoá?'; setTimeout(()=>{ if(bc.isConnected){ delete bc.dataset.arm; bc.textContent='Xoá hết trang'; } },3000); } };
+  const bc=$('#bClear'); if(bc) bc.onclick=()=>{ if(bc.dataset.arm){ S.pages=[]; saveAll(); render(); toast('Đã xoá tất cả'); } else { bc.dataset.arm='1'; bc.textContent='Chắc chắn xoá?'; setTimeout(()=>{ if(bc.isConnected){ delete bc.dataset.arm; bc.textContent='Xoá hết trang'; } },3000); } };
 }
 
 /* ================= live camera with auto capture ================= */
@@ -464,7 +467,7 @@ function renderConfirm(){
   $('#chips').onclick=e=>{ const f=e.target.dataset.f; if(!f) return; p.filter=f; [...$('#chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.f===f)); process(p); show(); };
   $('#a4chips').onclick=e=>{ const v=e.target.dataset.a4; if(v===undefined) return; p.a4=v==='1'; [...$('#a4chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.a4===v)); process(p); show(); };
   footer.innerHTML=`<button id="bRetake" style="color:var(--warn)">Bỏ</button><button id="bEdit">Chỉnh góc</button><button class="primary" id="bKeep">Giữ trang</button><button class="primary" id="bKeepNext">Giữ &amp; chụp tiếp</button>`;
-  const keep=()=>{ delete p._new; S.pages.push(p); savePages(); toast('Đã thêm trang '+S.pages.length); };
+  const keep=()=>{ delete p._new; S.pages.push(p); pageBlob(p).then(saveAll); toast('Đã thêm trang '+S.pages.length); };
   $('#bKeep').onclick=()=>{ keep(); nextConfirm(); };
   $('#bKeepNext').onclick=()=>{ keep(); if(S.queue.length) nextConfirm(); else { S.cur=null; S.view='camera'; render(); } };
   $('#bRetake').onclick=()=>{ toast('Đã bỏ ảnh'); if(!S.queue.length && p._new){ S.cur=null; S.view='camera'; render(); } else nextConfirm(); };
@@ -497,7 +500,7 @@ function renderEdit(){
   $('#chips').onclick=e=>{ const f=e.target.dataset.f; if(!f) return; p.filter=f; [...$('#chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.f===f)); preview(); };
   draw(); sizeHandles(); preview(); window.addEventListener('resize',sizeHandles,{once:true});
   footer.innerHTML=`<button class="primary" id="bDone">${p._new?'Xong, xem lại':'Xong'}</button>`;
-  $('#bDone').onclick=()=>{ process(p); if(p._new){ S.view='confirm'; render(); } else { savePages(); S.cur=null; S.view='list'; render(); } };
+  $('#bDone').onclick=()=>{ process(p); if(p._new){ S.view='confirm'; render(); } else { pageBlob(p).then(saveAll); S.cur=null; S.view='list'; render(); } };
 }
 
 /* ================= OCR (tesseract.js, runs on the phone) ================= */
