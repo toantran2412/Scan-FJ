@@ -110,14 +110,14 @@ footer button{flex:1 1 auto;min-width:0}
 
 <script>
 'use strict';
-const APP_VERSION='v7 · 22/10 10:40';
+const APP_VERSION='v8 · 22/10 10:52';
 /* ================= state ================= */
 const S = {
   docs: [],           // {id, name, created, pages:[{id, src:canvas|null, corners, filter, a4, rot, out:canvas, blob, ocr:''}]}
   doc: null,          // document being worked on
   view: 'home', cur: null, queue: [],
   quality: 'medium', autoShot: true,
-  stream: null, camTimer: null,
+  stream: null, camTimer: null, camToken: 0,
 };
 // S.pages / S.docName always refer to the open document
 Object.defineProperty(S,'pages',{get(){ return S.doc?S.doc.pages:[]; }, set(v){ if(S.doc) S.doc.pages=v; }});
@@ -409,19 +409,32 @@ function renderList(){
 function pauseCamera(){ if(S.camTimer){ clearInterval(S.camTimer); S.camTimer=null; } }
 function stopCamera(){ pauseCamera(); if(S.stream){ S.stream.getTracks().forEach(t=>t.stop()); S.stream=null; } }
 async function renderCamera(){
+  // each call gets a token; a newer call or leaving the camera screen makes it stale, and a stale call must stop touching the page
+  const token=++S.camToken, stale=()=>S.view!=='camera' || token!==S.camToken;
+  const quit=()=>{ if(S.view==='home') stopCamera(); };   // the camera may have opened after render() already went home
   $('#title').textContent='Chụp'; $('#subtitle').textContent='Đưa giấy vào khung, giữ yên máy';
   main.className='cam';
   main.innerHTML=`<div class="camwrap"><video id="vid" autoplay playsinline muted></video><canvas class="ov" id="ov"></canvas><div class="camstatus" id="cs">Đang mở camera…</div></div>`;
   footer.innerHTML=`<div class="camfoot" style="width:100%"><label class="switch"><input type="checkbox" id="auto"> Tự chụp</label><button class="shutter" id="shot" aria-label="Chụp"></button><button id="bFile">Ảnh có sẵn</button></div>`;
   const auto=$('#auto'); auto.checked=S.autoShot; auto.onchange=()=>{S.autoShot=auto.checked; savePages();};
   $('#bFile').onclick=()=>$('#fileLib').click();
-  const vid=$('#vid'), ov=$('#ov'), cs=$('#cs');
+  const vid=$('#vid'), ov=$('#ov');
   try{
     if(!(S.stream && S.stream.active && S.stream.getVideoTracks().some(t=>t.readyState==='live'))){
-      S.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:4032}, height:{ideal:3024}}, audio:false});
+      const st=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:4032}, height:{ideal:3024}}, audio:false});
+      if(S.stream && S.stream.active) st.getTracks().forEach(t=>t.stop());   // a newer call opened the camera meanwhile: drop the duplicate
+      else S.stream=st;
+      if(stale()) return quit();
     }
     vid.srcObject=S.stream; await vid.play();
-  }catch(e){ cs.textContent='Không mở được camera ('+(e.name||e)+'). Dùng nút "Ảnh có sẵn" hoặc cho phép camera trong cài đặt trình duyệt.'; cs.classList.remove('ok'); $('#shot').onclick=()=>$('#fileCam').click(); return; }
+    if(stale()) return quit();
+  }catch(e){
+    if(stale()) return quit();
+    const cs=$('#cs'), shot=$('#shot');
+    if(cs){ cs.textContent='Không mở được camera ('+(e.name||e)+'). Dùng nút "Ảnh có sẵn" hoặc cho phép camera trong cài đặt trình duyệt.'; cs.classList.remove('ok'); }
+    if(shot) shot.onclick=()=>$('#fileCam').click();
+    return;
+  }
   const small=document.createElement('canvas'); const sctx=small.getContext('2d',{willReadFrequently:true});
   let stable=0, last=null, counting=false, lastQuad=null;
   const capture=async()=>{
@@ -431,8 +444,11 @@ async function renderCamera(){
     try{ const p=await addCanvas(full); busy(null); S.queue.push(p); nextConfirm(); }catch(e){ busy(null); toast('Lỗi xử lý ảnh: '+(e.message||e)); S.view='list'; render(); }
   };
   $('#shot').onclick=capture;
+  let timer=null;
   const tick=()=>{
-    if(!vid.videoWidth) return;
+    if(stale()){ clearInterval(timer); if(S.camTimer===timer) S.camTimer=null; return; }
+    const cs=$('#cs'), shot=$('#shot');
+    if(!vid.videoWidth || !cs || !shot) return;
     const vw=vid.videoWidth, vh=vid.videoHeight; const k=Math.min(1,320/Math.max(vw,vh));
     small.width=Math.round(vw*k); small.height=Math.round(vh*k); sctx.drawImage(vid,0,0,small.width,small.height);
     let q=null; try{ q=regionCorners(small); }catch(e){}
@@ -447,11 +463,11 @@ async function renderCamera(){
       // stability: max corner movement relative to frame size
       let mv=1; if(last){ mv=0; for(let i=0;i<4;i++) mv=Math.max(mv, Math.hypot(q[i].x-last[i].x, q[i].y-last[i].y)/Math.max(small.width,small.height)); }
       last=q; stable = mv<0.015 ? stable+1 : 0;
-      if(S.autoShot){ const need=6; cs.textContent= stable>=need ? 'Chụp!' : stable>=2 ? 'Giữ yên… '+Math.max(0,need-stable) : 'Đã thấy giấy, giữ yên máy'; cs.classList.add('ok'); $('#shot').classList.toggle('counting',stable>=2); if(stable>=need) capture(); }
+      if(S.autoShot){ const need=6; cs.textContent= stable>=need ? 'Chụp!' : stable>=2 ? 'Giữ yên… '+Math.max(0,need-stable) : 'Đã thấy giấy, giữ yên máy'; cs.classList.add('ok'); shot.classList.toggle('counting',stable>=2); if(stable>=need) capture(); }
       else { cs.textContent='Đã thấy giấy · bấm nút tròn để chụp'; cs.classList.add('ok'); }
-    } else { last=null; stable=0; cs.textContent='Chưa thấy giấy · đặt giấy trên nền tối, đủ sáng'; cs.classList.remove('ok'); $('#shot').classList.remove('counting'); }
+    } else { last=null; stable=0; cs.textContent='Chưa thấy giấy · đặt giấy trên nền tối, đủ sáng'; cs.classList.remove('ok'); shot.classList.remove('counting'); }
   };
-  S.camTimer=setInterval(tick,200);
+  timer=S.camTimer=setInterval(tick,200);
 }
 
 /* ================= confirm ================= */

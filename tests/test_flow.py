@@ -1,9 +1,19 @@
-"""Kiểm tra luồng chính của Scan FJ bằng Playwright (Chromium headless).
+r"""Kiểm tra luồng chính của Scan FJ bằng Playwright (Chromium headless).
 
-Cách chạy (trong thư mục gốc repo):
-    pip install playwright && playwright install chromium
-    python3 -m http.server 8765 &
-    python3 tests/test_flow.py /duong/dan/anh_to_giay.jpg
+Cách chạy trên Windows, trong PowerShell, tại thư mục gốc repo
+(dùng `python`, không phải `python3`):
+    # Cài một lần
+    pip install playwright
+    python -m playwright install chromium
+
+    # Mỗi lần kiểm tra: bật máy chủ tạm ở cổng 8765, chạy test, tắt máy chủ
+    $env:PYTHONUTF8 = '1'
+    $srv = Start-Process python -ArgumentList '-m http.server 8765' -WorkingDirectory $PWD -WindowStyle Hidden -PassThru
+    Start-Sleep 2
+    python tests\test_flow.py C:\duong\dan\anh_to_giay.jpg
+    Stop-Process -Id $srv.Id
+
+PYTHONUTF8=1 để in được tiếng Việt (bảng mã mặc định của Windows tiếng Việt là cp1258).
 
 Kiểm tra: tạo 2 tài liệu từ cùng một ảnh, giữ trang, xuất PDF (tải về),
 tải lại trang và xác nhận 2 tài liệu vẫn còn, không có lỗi JavaScript.
@@ -82,6 +92,6 @@ async def main(image):
 
 if __name__ == '__main__':
     if len(sys.argv) < 2 or not os.path.exists(sys.argv[1]):
-        print('Cách dùng: python3 tests/test_flow.py /duong/dan/anh_to_giay.jpg')
+        print(r'Cách dùng: python tests\test_flow.py C:\duong\dan\anh_to_giay.jpg')
         sys.exit(2)
     asyncio.run(main(os.path.abspath(sys.argv[1])))
