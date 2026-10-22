@@ -110,7 +110,7 @@ footer button{flex:1 1 auto;min-width:0}
 
 <script>
 'use strict';
-const APP_VERSION='v9 · 22/10 11:15';
+const APP_VERSION='v10 · 22/10 11:30';
 /* ================= state ================= */
 const S = {
   docs: [],           // {id, name, created, pages:[{id, src:canvas|null, corners, filter, a4, rot, out:canvas, blob, ocr:''}]}
@@ -245,11 +245,12 @@ function regionCorners(src){
     const side=(p1,p2)=>Math.hypot(p1.x-p2.x,p1.y-p2.y); const minSide=Math.min(side(bq[0],bq[1]),side(bq[1],bq[2]),side(bq[2],bq[3]),side(bq[3],bq[0]));
     if(minSide<Math.min(w,h)*0.15) return null;
     // push each corner outward by the pixels the erosion/edge cut removed, so the paper edge is not shaved off
-    const push=erodeN+1.5;
+    const push=(cutEdges?2:0.5);
     return bq.map(q=>{ const dx=q.x-cx, dy=q.y-cy, L=Math.hypot(dx,dy)||1; return {x:Math.max(0,Math.min(W,(q.x+dx/L*push)*sx)), y:Math.max(0,Math.min(H,(q.y+dy/L*push)*sy))}; });
   }
-  // edges cut first (separates touching sheets); then stronger opening; then plain brightness as a last resort
-  return attempt(1,true) || attempt(3,true) || attempt(1,false) || null;
+  // plain brightness first (robust for forms whose lines reach the paper edge); when that region is not a clean
+  // rectangle (a sheet touching another sheet), cut along edges to separate them; then with a stronger opening
+  return attempt(1,false) || attempt(1,true) || attempt(3,true) || null;
 }
 // monotone-chain convex hull, counter-clockwise in screen coordinates
 function convexHull(pts){
