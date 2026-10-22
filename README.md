@@ -57,6 +57,11 @@ IndexedDB `fresco-scan` phiên bản 2, hai store: `docs` (`id,name,created,orde
 - Tên miền riêng (vd. `scan.fresco.vn`) nếu muốn hộp thoại iOS hiện tên công ty thay vì `toantran2412.github.io` (GitHub Pages hỗ trợ CNAME miễn phí).
 - Chưa thử trên Android thật và trên hoá đơn nhỏ / giấy màu.
 
+## Giới hạn đã biết
+
+1. **Biểu mẫu kẻ đen chụp sát** (tờ giấy chiếm > 70 % khung) có thể bị cắt vào cái bảng ở giữa thay vì cả trang: đường kẻ đen chia trang thành nhiều vùng sáng và cách dò ưu tiên vùng chứa tâm khung. **Lùi máy ra** (thấy cả mép giấy và một phần mặt bàn) là hết. Thử trên v11: tờ giấy chiếm ~88 % khung → cắt vào bảng; ~56 % và ~37 % khung → đúng cả trang. Lỗi có từ v10, chưa sửa.
+2. **Sổ lò xo / tờ giấy đặt trên xấp giấy trắng cùng màu, không có bóng:** chỉ cách dò theo đường thẳng (cách 4) tách được, và chỉ khi **cả 4 mép đều rõ**; gáy lò xo làm mất 1 mép nên app lấy cả xấp giấy. Hướng dẫn người dùng **đặt sổ / tờ giấy lên mặt bàn** rồi chụp. Thử trên v11: sổ lò xo trên xấp giấy → lấy cả xấp; cùng cuốn sổ đặt trên mặt bàn gỗ → đúng 4 góc.
+
 ## Kiểm tra
 
 `tests/test_flow.py` (Playwright, Chromium headless, khung hình điện thoại 400×860): tạo 2 tài liệu từ một ảnh, giữ trang, xuất PDF, tải lại trang kiểm tra dữ liệu còn; rồi tự dựng **ảnh thử 2** bằng Pillow (tờ A4 có chữ xoay 11° nằm trên xấp giấy lớn hơn 3 % mỗi chiều, góc trên trái chạm tờ giấy khác, nền gỗ tối) và xác nhận từng góc dò được nằm **phía trong** tờ trên cùng: so khoảng cách tới tâm tờ thật, góc dò được không lố ra ngoài quá 0,3 % và không lọt vào trong quá 2 % (tính theo khung) – nên phân biệt được tờ trên cùng với mép xấp giấy (lố ra 0,8–1,6 %). **Ảnh thử 3**: cuốn sổ bìa trắng bằng 70 % kích thước xấp giấy, nằm trên xấp giấy trắng cùng màu, không có bóng – kiểm tra 4 góc cuốn sổ theo cùng cách đo. Chạy trên Windows, trong **PowerShell**, tại thư mục gốc repo (dùng `python`, không phải `python3`):
