@@ -18,8 +18,10 @@ PYTHONUTF8=1 để in được tiếng Việt (bảng mã mặc định của Wi
 Kiểm tra: tạo 2 tài liệu từ cùng một ảnh, giữ trang, xuất PDF (tải về),
 tải lại trang và xác nhận 2 tài liệu vẫn còn, không có lỗi JavaScript.
 Sau đó tự dựng ảnh thử 2 bằng Pillow (tờ A4 xoay 11° trên xấp giấy lớn hơn 3 %,
-góc trên trái chạm tờ giấy khác, nền gỗ tối) và xác nhận 4 góc dò được lệch
-không quá 3 % khung so với 4 góc thật của tờ trên cùng.
+góc trên trái chạm tờ giấy khác, nền gỗ tối) và xác nhận từng góc dò được nằm
+phía trong tờ trên cùng: so với góc thật, khoảng cách tới tâm tờ thật không được
+lớn hơn quá 0,3 % (lố ra ngoài) hay nhỏ hơn quá 2 % (lọt vào trong), tính theo
+tỉ lệ khung. Mép xấp giấy lố ra 0,8–1,6 % nên bị phân biệt với tờ trên cùng.
 """
 import asyncio, itertools, math, os, random, sys, tempfile
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
@@ -110,15 +112,18 @@ def make_stack_image(path):
     return [(x / W, y / H) for x, y in corners]
 
 
-def match_corners(truth, found):
-    """Ghép 4 góc dò được với 4 góc thật sao cho độ lệch lớn nhất là nhỏ nhất.
-    Độ lệch tính theo tỉ lệ khung (x theo chiều rộng, y theo chiều cao). Trả về (độ lệch lớn nhất, các cặp)."""
+def corner_offsets(truth, found):
+    """Ghép 4 góc dò được với 4 góc thật (cách ghép có độ lệch lớn nhất nhỏ nhất), rồi đo từng góc dò được
+    lố ra ngoài hay lọt vào trong tờ thật: khoảng cách tới tâm tờ thật của góc dò được trừ của góc thật
+    (dương = lố ra ngoài, âm = lọt vào trong). Toạ độ theo tỉ lệ khung (x / rộng, y / cao).
+    Trả về [(góc thật, góc dò được, độ lố)]."""
     best = None
     for perm in itertools.permutations(found):
         err = max(max(abs(f[0] - t[0]), abs(f[1] - t[1])) for t, f in zip(truth, perm))
         if best is None or err < best[0]:
             best = (err, list(zip(truth, perm)))
-    return best
+    cx, cy = sum(t[0] for t in truth) / 4, sum(t[1] for t in truth) / 4
+    return [(t, f, math.hypot(f[0] - cx, f[1] - cy) - math.hypot(t[0] - cx, t[1] - cy)) for t, f in best[1]]
 
 
 async def add_page_from_file(pg, image):
@@ -189,11 +194,13 @@ async def main(image):
             await pg.set_input_files('#fileLib', image2)
             await pg.wait_for_selector('#bKeep', timeout=60000)
         found = await pg.evaluate("S.cur.corners.map(c=>[c.x/S.cur.src.width, c.y/S.cur.src.height])")
-        err, pairs = match_corners(truth, found)
-        for t, f in pairs:
-            print(f'  góc thật ({t[0]:.3f}, {t[1]:.3f}) | dò được ({f[0]:.3f}, {f[1]:.3f})')
-        print(f'  lệch lớn nhất: {err * 100:.1f} % khung (cho phép 3 %)')
-        assert err <= 0.03, f'góc dò được lệch {err * 100:.1f} % khung, quá 3 %'
+        rows = corner_offsets(truth, found)
+        print('  cho phép: lố ra ngoài ≤ 0,3 %, lọt vào trong ≤ 2 % (theo khung)')
+        for t, f, d in rows:
+            print(f'  góc thật ({t[0]:.3f}, {t[1]:.3f}) | dò được ({f[0]:.3f}, {f[1]:.3f}) | '
+                  + (f'lố ra {d * 100:.2f} %' if d > 0 else f'lọt vào {-d * 100:.2f} %'))
+        bad = [d for _, _, d in rows if d > 0.003 or d < -0.02]
+        assert not bad, 'góc dò được lố ra quá 0,3 % hoặc lọt vào quá 2 %: ' + ', '.join(f'{d * 100:+.2f} %' for d in bad)
 
         await browser.close()
         if errors:
