@@ -14,14 +14,25 @@
 5. Tên app là **"Scan FJ"** (đã chốt). Không đổi nếu Toàn không yêu cầu.
 
 ## Cách kiểm tra trước khi đẩy
-```bash
+Máy của Toàn là **Windows**: chạy các lệnh dưới đây trong **PowerShell**, tại thư mục gốc repo (vd. `C:\dev\Scan-FJ`). Trên Windows gọi `python` (hoặc `py`), không phải `python3`. Cài một lần: `pip install playwright` rồi `python -m playwright install chromium`.
+
+```powershell
+# 1. Kiểm tra cú pháp
 node --check sw.js
-python3 - <<'EOF'
-import re;s=open('index.html').read();open('/tmp/app.js','w').write(re.findall(r'<script>(.*?)</script>',s,re.S)[0])
-EOF
-node --check /tmp/app.js
-python3 -m http.server 8765 & python3 tests/test_flow.py /duong/dan/anh_to_giay.jpg
+python -c "import re,os;s=open('index.html',encoding='utf-8').read();open(os.environ['TEMP']+'/app.js','w',encoding='utf-8').write(re.findall(r'<script>(.*?)</script>',s,re.S)[0])"
+node --check "$env:TEMP\app.js"
+
+# 2. Test luồng chính: bật máy chủ tạm ở cổng 8765, chạy test, tắt máy chủ
+$env:PYTHONUTF8 = '1'
+$srv = Start-Process python -ArgumentList '-m http.server 8765' -WorkingDirectory $PWD -WindowStyle Hidden -PassThru
+Start-Sleep 2
+python tests\test_flow.py C:\duong\dan\anh_to_giay.jpg
+Stop-Process -Id $srv.Id
 ```
+Test đạt khi dòng cuối là `TẤT CẢ ĐẠT`.
+
+Chữ tiếng Việt trên Windows: bảng mã mặc định là cp1258, nên đọc/ghi file bằng Python phải ghi rõ `encoding='utf-8'` (thiếu là lỗi `UnicodeDecodeError` khi đọc `index.html`); `PYTHONUTF8=1` để test in được tiếng Việt. Không ghi file bằng `Set-Content`/`Out-File` của PowerShell.
+
 Headless Chromium không có camera: màn hình Chụp sẽ báo "Không mở được camera" – bình thường; dùng nút "Ảnh có sẵn" (`#fileLib`) để nạp ảnh trong test.
 
 ## Triển khai

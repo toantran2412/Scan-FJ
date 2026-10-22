@@ -61,15 +61,32 @@ IndexedDB `fresco-scan` phiên bản 2, hai store: `docs` (`id,name,created,orde
 
 ## Kiểm tra
 
-`tests/test_flow.py` (Playwright, Chromium headless): tạo 2 tài liệu từ một ảnh, giữ trang, xuất PDF, tải lại trang kiểm tra dữ liệu còn. Chạy:
+`tests/test_flow.py` (Playwright, Chromium headless, khung hình điện thoại 400×860): tạo 2 tài liệu từ một ảnh, giữ trang, xuất PDF, tải lại trang kiểm tra dữ liệu còn. Chạy trên Windows, trong **PowerShell**, tại thư mục gốc repo (dùng `python`, không phải `python3`):
 
-```bash
-pip install playwright && playwright install chromium
-python3 -m http.server 8765 &          # trong thư mục repo
-python3 tests/test_flow.py /duong/dan/anh_to_giay.jpg
+```powershell
+# Cài một lần
+pip install playwright
+python -m playwright install chromium
+
+# Mỗi lần kiểm tra: bật máy chủ tạm ở cổng 8765, chạy test, tắt máy chủ
+$env:PYTHONUTF8 = '1'
+$srv = Start-Process python -ArgumentList '-m http.server 8765' -WorkingDirectory $PWD -WindowStyle Hidden -PassThru
+Start-Sleep 2
+python tests\test_flow.py C:\duong\dan\anh_to_giay.jpg
+Stop-Process -Id $srv.Id
 ```
 
-Kiểm tra cú pháp nhanh: `node --check sw.js` và tách `<script>` của `index.html` rồi `node --check`.
+Ảnh thử: ảnh chụp một tờ giấy bất kỳ đặt trên nền tối. Test đạt khi dòng cuối là `TẤT CẢ ĐẠT`.
+
+Kiểm tra cú pháp nhanh (PowerShell):
+
+```powershell
+node --check sw.js
+python -c "import re,os;s=open('index.html',encoding='utf-8').read();open(os.environ['TEMP']+'/app.js','w',encoding='utf-8').write(re.findall(r'<script>(.*?)</script>',s,re.S)[0])"
+node --check "$env:TEMP\app.js"
+```
+
+Lưu ý Windows: bảng mã mặc định là cp1258, nên đọc/ghi file bằng Python phải ghi rõ `encoding='utf-8'` (hoặc đặt `$env:PYTHONUTF8 = '1'`); không ghi file bằng `Set-Content`/`Out-File` của PowerShell vì sẽ hỏng chữ tiếng Việt.
 
 ## Quy ước khi sửa
 
