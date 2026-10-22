@@ -110,7 +110,7 @@ footer button{flex:1 1 auto;min-width:0}
 
 <script>
 'use strict';
-const APP_VERSION='v8 · 22/10 10:52';
+const APP_VERSION='v9 · 22/10 11:15';
 /* ================= state ================= */
 const S = {
   docs: [],           // {id, name, created, pages:[{id, src:canvas|null, corners, filter, a4, rot, out:canvas, blob, ocr:''}]}
@@ -182,70 +182,74 @@ async function loadFile(file){
 /* ================= paper detection ================= */
 function defaultCorners(src){ const W=src.width,H=src.height; return [{x:W*.04,y:H*.04},{x:W*.96,y:H*.04},{x:W*.96,y:H*.96},{x:W*.04,y:H*.96}]; }
 function autoCorners(src){ try{ const q=regionCorners(src); if(q) return q; }catch(e){} return defaultCorners(src); }
-// paper = largest bright connected region; fit its 4 boundary lines; intersect for corners. Returns null when unsure.
+// Paper detection. Bright regions are cut apart along visible edges (the thin shadow line between two sheets),
+// the region under the centre of the frame is preferred, and a region that does not fill its 4-corner outline is rejected.
+// Returns the 4 corners (tl,tr,br,bl) in source pixels, or null when unsure.
 function regionCorners(src){
   const W=src.width, H=src.height;
   const k=Math.min(1,400/Math.max(W,H)); const w=Math.max(8,Math.round(W*k)), h=Math.max(8,Math.round(H*k));
   const c=document.createElement('canvas'); c.width=w; c.height=h; const ctx=c.getContext('2d',{willReadFrequently:true}); ctx.drawImage(src,0,0,w,h);
   const d=ctx.getImageData(0,0,w,h).data; const n=w*h; const g=new Uint8Array(n); const hist=new Uint32Array(256);
   for(let i=0;i<n;i++){ const v=(0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2])|0; g[i]=v; hist[v]++; }
+  // brightness threshold: Otsu pushed toward the bright end so grey desks/keyboards stay out
   let sum=0; for(let v=0;v<256;v++) sum+=v*hist[v];
   let sumB=0,wB=0,best=0,thr=128;
   for(let v=0;v<256;v++){ wB+=hist[v]; if(!wB) continue; const wF=n-wB; if(!wF) break; sumB+=v*hist[v]; const mB=sumB/wB,mF=(sum-sumB)/wF; const b=wB*wF*(mB-mF)*(mB-mF); if(b>best){best=b;thr=v;} }
   let acc=0,p95=255; for(let v=255;v>=0;v--){ acc+=hist[v]; if(acc>n*0.05){p95=v;break;} }
   const t=Math.round((thr+p95)/2);
-  let m=new Uint8Array(n); for(let i=0;i<n;i++) m[i]=g[i]>t?1:0;
+  const bright=new Uint8Array(n); for(let i=0;i<n;i++) bright[i]=g[i]>t?1:0;
+  // edge map (gradient magnitude), dilated by 1 px: used to cut touching sheets apart
+  const edge=new Uint8Array(n);
+  for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ const i=y*w+x; if(Math.abs(g[i+1]-g[i-1])+Math.abs(g[i+w]-g[i-w])>28) edge[i]=1; }
+  const edgeD=new Uint8Array(n);
+  for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ const i=y*w+x; if(edge[i]||edge[i-1]||edge[i+1]||edge[i-w]||edge[i+w]) edgeD[i]=1; }
   const morph=(src,erode)=>{ const o=new Uint8Array(n); for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ let s=0; for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++) s+=src[(y+dy)*w+x+dx]; o[y*w+x]=erode?(s===9?1:0):(s>0?1:0); } return o; };
-  m=morph(morph(m,true),false);
-  const lab=new Int32Array(n); let bestId=0,bestSize=0,id=0; const stack=new Int32Array(n);
-  for(let s0=0;s0<n;s0++){ if(!m[s0]||lab[s0]) continue; id++; let sp=0,size=0; stack[sp++]=s0; lab[s0]=id;
-    while(sp){ const i=stack[--sp]; size++; const x=i%w, y=(i-x)/w;
-      if(x>0&&m[i-1]&&!lab[i-1]){lab[i-1]=id;stack[sp++]=i-1;} if(x<w-1&&m[i+1]&&!lab[i+1]){lab[i+1]=id;stack[sp++]=i+1;}
-      if(y>0&&m[i-w]&&!lab[i-w]){lab[i-w]=id;stack[sp++]=i-w;} if(y<h-1&&m[i+w]&&!lab[i+w]){lab[i+w]=id;stack[sp++]=i+w;} }
-    if(size>bestSize){bestSize=size;bestId=id;} }
-  if(bestSize < n*0.12) return null;
   const sx=W/w, sy=H/h;
-  // --- method A: convex hull of the region, simplified to its 4 corners (handles tilted paper) ---
-  try{
+  const area4=q=>Math.abs((q[0].x*q[1].y-q[1].x*q[0].y)+(q[1].x*q[2].y-q[2].x*q[1].y)+(q[2].x*q[3].y-q[3].x*q[2].y)+(q[3].x*q[0].y-q[0].x*q[3].y))/2;
+
+  function attempt(erodeN, cutEdges){
+    let m=new Uint8Array(n); for(let i=0;i<n;i++) m[i]=bright[i]&&!(cutEdges&&edgeD[i])?1:0;
+    for(let r=0;r<erodeN;r++) m=morph(m,true); for(let r=0;r<erodeN;r++) m=morph(m,false);
+    // connected components
+    const lab=new Int32Array(n); const sizes=[0]; let id=0; const stack=new Int32Array(n);
+    for(let s0=0;s0<n;s0++){ if(!m[s0]||lab[s0]) continue; id++; let sp=0,size=0; stack[sp++]=s0; lab[s0]=id;
+      while(sp){ const i=stack[--sp]; size++; const x=i%w, y=(i-x)/w;
+        if(x>0&&m[i-1]&&!lab[i-1]){lab[i-1]=id;stack[sp++]=i-1;} if(x<w-1&&m[i+1]&&!lab[i+1]){lab[i+1]=id;stack[sp++]=i+1;}
+        if(y>0&&m[i-w]&&!lab[i-w]){lab[i-w]=id;stack[sp++]=i-w;} if(y<h-1&&m[i+w]&&!lab[i+w]){lab[i+w]=id;stack[sp++]=i+w;} }
+      sizes.push(size); }
+    if(id===0) return null;
+    // prefer the region under the centre of the frame (that is where people aim the paper); else the largest
+    let bestId=lab[(h>>1)*w+(w>>1)]; if(!bestId || sizes[bestId]<n*0.12){ bestId=0; for(let i=1;i<=id;i++) if(sizes[i]>sizes[bestId]) bestId=i; }
+    const bestSize=sizes[bestId]; if(bestSize < n*0.12) return null;
+    // boundary pixels -> convex hull -> 4 corners
     const bp=[]; for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const i=y*w+x; if(lab[i]!==bestId) continue;
       if(x===0||y===0||x===w-1||y===h-1||lab[i-1]!==bestId||lab[i+1]!==bestId||lab[i-w]!==bestId||lab[i+w]!==bestId) bp.push({x,y}); }
-    const hull=convexHull(bp);
-    if(hull.length>=4){
-      let poly=hull, eps=1.5; while(poly.length>8 && eps<Math.max(w,h)){ poly=dpClosed(hull,eps); eps*=1.5; }
-      if(poly.length>=4){
-        const area=q=>Math.abs((q[0].x*q[1].y-q[1].x*q[0].y)+(q[1].x*q[2].y-q[2].x*q[1].y)+(q[2].x*q[3].y-q[3].x*q[2].y)+(q[3].x*q[0].y-q[0].x*q[3].y))/2;
-        let bq=null,ba=0; const m=poly.length;
-        for(let a=0;a<m;a++) for(let b=a+1;b<m;b++) for(let c=b+1;c<m;c++) for(let d=c+1;d<m;d++){ const q=[poly[a],poly[b],poly[c],poly[d]]; const ar=area(q); if(ar>ba){ba=ar;bq=q;} }
-        if(bq && ba>=n*0.12 && ba>=bestSize*0.8){
-          const cx=(bq[0].x+bq[1].x+bq[2].x+bq[3].x)/4, cy=(bq[0].y+bq[1].y+bq[2].y+bq[3].y)/4;
-          bq.sort((p1,p2)=>Math.atan2(p1.y-cy,p1.x-cx)-Math.atan2(p2.y-cy,p2.x-cx)); // tl,tr,br,bl in image coordinates
-          const side=(p1,p2)=>Math.hypot(p1.x-p2.x,p1.y-p2.y); const minSide=Math.min(side(bq[0],bq[1]),side(bq[1],bq[2]),side(bq[2],bq[3]),side(bq[3],bq[0]));
-          if(minSide>=Math.min(w,h)*0.15){
-            // push each corner half a pixel outward so the paper edge is not shaved off
-            return bq.map(q=>({x:Math.max(0,Math.min(W,(q.x+(q.x>cx?1:-1)*0.5)*sx)), y:Math.max(0,Math.min(H,(q.y+(q.y>cy?1:-1)*0.5)*sy))}));
-          }
-        }
-      }
-    }
-  }catch(e){}
-  // --- method B: fit the 4 boundary lines of the region (works when the paper is nearly upright) ---
-  let x0=w,x1=0,y0=h,y1=0; for(let i=0;i<n;i++){ if(lab[i]!==bestId) continue; const x=i%w,y=(i-x)/w; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
-  if(x1-x0<w*.2||y1-y0<h*.2) return null;
-  const L=[],R=[],T=[],B=[];
-  for(let y=Math.round(y0+(y1-y0)*.1); y<=y1-(y1-y0)*.1; y++){ let a=-1,b=-1; for(let x=x0;x<=x1;x++){ if(lab[y*w+x]===bestId){ if(a<0)a=x; b=x; } } if(a>=0){L.push({x:a,y});R.push({x:b,y});} }
-  for(let x=Math.round(x0+(x1-x0)*.1); x<=x1-(x1-x0)*.1; x++){ let a=-1,b=-1; for(let y=y0;y<=y1;y++){ if(lab[y*w+x]===bestId){ if(a<0)a=y; b=y; } } if(a>=0){T.push({x,y:a});B.push({x,y:b});} }
-  const fit=(arr,horiz)=>{ const get=p=>horiz?[p.x,p.y]:[p.y,p.x];
-    const ls=a=>{ const nn=a.length; let sx=0,sy=0,sxx=0,sxy=0; for(const p of a){const [u,v]=get(p);sx+=u;sy+=v;sxx+=u*u;sxy+=u*v;} const dd=nn*sxx-sx*sx; if(Math.abs(dd)<1e-9) return null; const mm=(nn*sxy-sx*sy)/dd; return {a:mm,b:(sy-mm*sx)/nn}; };
-    let a=arr, Lf=null;
-    for(let it=0;it<2;it++){ if(a.length<4) return null; Lf=ls(a); if(!Lf) return null; const res=a.map(p=>{const [u,v]=get(p);return Math.abs(v-(Lf.a*u+Lf.b));}); const med=[...res].sort((p,q)=>p-q)[res.length>>1]; a=a.filter((p,i)=>res[i]<=Math.max(2.5,med*2.5)); }
-    return Lf; };
-  const tl=fit(T,true), bl=fit(B,true), ll=fit(L,false), rl=fit(R,false);
-  if(!tl||!bl||!ll||!rl) return null;
-  const X=(hz,vt)=>{ const y=(hz.a*vt.b+hz.b)/(1-hz.a*vt.a); return {x:vt.a*y+vt.b,y}; };
-  let q=[X(tl,ll),X(tl,rl),X(bl,rl),X(bl,ll)].map(p=>({x:Math.max(0,Math.min(w,p.x)),y:Math.max(0,Math.min(h,p.y))}));
-  const area=Math.abs((q[0].x*q[1].y-q[1].x*q[0].y)+(q[1].x*q[2].y-q[2].x*q[1].y)+(q[2].x*q[3].y-q[3].x*q[2].y)+(q[3].x*q[0].y-q[0].x*q[3].y))/2;
-  if(area < n*0.12) return null;
-  return q.map(p=>({x:p.x*sx,y:p.y*sy}));
+    const hull=convexHull(bp); if(hull.length<4) return null;
+    let poly=hull, eps=1.5; while(poly.length>8 && eps<Math.max(w,h)){ poly=dpClosed(hull,eps); eps*=1.5; }
+    if(poly.length<4) return null;
+    let bq=null,ba=0; const mm=poly.length;
+    for(let a=0;a<mm;a++) for(let b=a+1;b<mm;b++) for(let c2=b+1;c2<mm;c2++) for(let d2=c2+1;d2<mm;d2++){ const q=[poly[a],poly[b],poly[c2],poly[d2]]; const ar=area4(q); if(ar>ba){ba=ar;bq=q;} }
+    if(!bq || ba<n*0.12) return null;
+    // the region (with the holes left by text filled in) must fill its 4-corner outline:
+    // a sheet merged with a neighbouring sheet makes an L shape and fails here
+    const reach=new Uint8Array(n); let sp2=0;
+    for(let x=0;x<w;x++){ for(const i of [x,(h-1)*w+x]) if(lab[i]!==bestId&&!reach[i]){reach[i]=1;stack[sp2++]=i;} }
+    for(let y=0;y<h;y++){ for(const i of [y*w,y*w+w-1]) if(lab[i]!==bestId&&!reach[i]){reach[i]=1;stack[sp2++]=i;} }
+    while(sp2){ const i=stack[--sp2]; const x=i%w, y=(i-x)/w;
+      if(x>0&&lab[i-1]!==bestId&&!reach[i-1]){reach[i-1]=1;stack[sp2++]=i-1;} if(x<w-1&&lab[i+1]!==bestId&&!reach[i+1]){reach[i+1]=1;stack[sp2++]=i+1;}
+      if(y>0&&lab[i-w]!==bestId&&!reach[i-w]){reach[i-w]=1;stack[sp2++]=i-w;} if(y<h-1&&lab[i+w]!==bestId&&!reach[i+w]){reach[i+w]=1;stack[sp2++]=i+w;} }
+    let filled=0; for(let i=0;i<n;i++) if(lab[i]===bestId||!reach[i]) filled++;
+    if(filled < ba*0.88) return null;
+    const cx=(bq[0].x+bq[1].x+bq[2].x+bq[3].x)/4, cy=(bq[0].y+bq[1].y+bq[2].y+bq[3].y)/4;
+    bq.sort((p1,p2)=>Math.atan2(p1.y-cy,p1.x-cx)-Math.atan2(p2.y-cy,p2.x-cx)); // tl,tr,br,bl in image coordinates
+    const side=(p1,p2)=>Math.hypot(p1.x-p2.x,p1.y-p2.y); const minSide=Math.min(side(bq[0],bq[1]),side(bq[1],bq[2]),side(bq[2],bq[3]),side(bq[3],bq[0]));
+    if(minSide<Math.min(w,h)*0.15) return null;
+    // push each corner outward by the pixels the erosion/edge cut removed, so the paper edge is not shaved off
+    const push=erodeN+1.5;
+    return bq.map(q=>{ const dx=q.x-cx, dy=q.y-cy, L=Math.hypot(dx,dy)||1; return {x:Math.max(0,Math.min(W,(q.x+dx/L*push)*sx)), y:Math.max(0,Math.min(H,(q.y+dy/L*push)*sy))}; });
+  }
+  // edges cut first (separates touching sheets); then stronger opening; then plain brightness as a last resort
+  return attempt(1,true) || attempt(3,true) || attempt(1,false) || null;
 }
 // monotone-chain convex hull, counter-clockwise in screen coordinates
 function convexHull(pts){
