@@ -110,7 +110,7 @@ footer button{flex:1 1 auto;min-width:0}
 
 <script>
 'use strict';
-const APP_VERSION='v12 · 23/10 04:30';
+const APP_VERSION='v13 · 23/10 04:36';
 /* ================= state ================= */
 const S = {
   docs: [],           // {id, name, created, pages:[{id, src:canvas|null, corners, filter, a4, rot, out:canvas, blob, ocr:''}]}
@@ -443,7 +443,7 @@ function guessRotation(c, size=300){
   let best=0; for(const r of [90,180,270]) if(score[r]>score[best]) best=r;
   return score[best]-score[0]>0.1?best:0;
 }
-// a new page has rot null: the first run guesses it; after that it is the user's (Xoay 90° / Xoay 180°)
+// a new page has rot null: the first run guesses it; after that it is the user's (Xoay 90° on either screen)
 function process(p){ if(!p.src){ return p.out; } const c=warp(p.src,p.corners,p.a4); if(p.rot==null) p.rot=guessRotation(c);
   p.out=rotateCanvas(applyFilter(c,p.filter),p.rot); p.blob=null; return p.out; }
 
@@ -602,13 +602,13 @@ function renderConfirm(){
   const p=S.cur, left=S.queue.length;
   $('#title').textContent='Giữ trang này?'; $('#subtitle').textContent='Đã tự dò mép và làm thẳng'+(left?` · còn ${left} ảnh chờ`:'');
   main.innerHTML=`<div class="preview-wrap"><canvas id="pv"></canvas></div><p class="kv" id="pvinfo"></p>
-    <div class="toolbar"><button id="bRot180">Xoay 180°</button></div>
+    <div class="toolbar"><button id="bRot90">Xoay 90°</button></div>
     <div class="section"><h2>Bộ lọc</h2>${chipsHtml('chips',p.filter)}</div>
     <div class="section"><h2>Khổ giấy</h2><div class="chips" id="a4chips"><button data-a4="1" aria-pressed="${p.a4!==false}">Ép khổ A4, full trang</button><button data-a4="0" aria-pressed="${p.a4===false}">Giữ tỉ lệ gốc (hoá đơn, giấy nhỏ)</button></div></div>
     <p class="hint">Mép dò chưa đúng? Bấm <b>Chỉnh góc</b> để kéo tay 4 góc.</p>`;
-  const show=()=>{ const pv=$('#pv'); const kk=Math.min(1,800/Math.max(p.out.width,p.out.height)); pv.width=p.out.width*kk; pv.height=p.out.height*kk; pv.getContext('2d').drawImage(p.out,0,0,pv.width,pv.height); $('#pvinfo').textContent=`Sau cắt: ${p.out.width} × ${p.out.height} px`+(p.rot?` · đã xoay ${p.rot}°`:''); };
+  const show=()=>{ const pv=$('#pv'); const kk=Math.min(1,800/Math.max(p.out.width,p.out.height)); pv.width=p.out.width*kk; pv.height=p.out.height*kk; pv.getContext('2d').drawImage(p.out,0,0,pv.width,pv.height); $('#pvinfo').textContent=`Sau cắt: ${p.out.width} × ${p.out.height} px`+(p.rot?` · xoay ${p.rot}°`:''); };
   show();
-  $('#bRot180').onclick=()=>{ p.rot=(p.rot+180)%360; process(p); show(); };
+  $('#bRot90').onclick=()=>{ p.rot=(p.rot+90)%360; process(p); show(); };   // clockwise; 4 presses come back to the start
   $('#chips').onclick=e=>{ const f=e.target.dataset.f; if(!f) return; p.filter=f; [...$('#chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.f===f)); process(p); show(); };
   $('#a4chips').onclick=e=>{ const v=e.target.dataset.a4; if(v===undefined) return; p.a4=v==='1'; [...$('#a4chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.a4===v)); process(p); show(); };
   footer.innerHTML=`<button id="bRetake" style="color:var(--warn)">Bỏ</button><button id="bEdit">Chỉnh góc</button><button class="primary" id="bKeep">Giữ trang</button><button class="primary" id="bKeepNext">Giữ &amp; chụp tiếp</button>`;
