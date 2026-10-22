@@ -110,7 +110,7 @@ footer button{flex:1 1 auto;min-width:0}
 
 <script>
 'use strict';
-const APP_VERSION='v11 · 23/10 04:05';
+const APP_VERSION='v12 · 23/10 04:30';
 /* ================= state ================= */
 const S = {
   docs: [],           // {id, name, created, pages:[{id, src:canvas|null, corners, filter, a4, rot, out:canvas, blob, ocr:''}]}
@@ -411,10 +411,44 @@ function applyFilter(c, filter){
   ctx.putImageData(id,0,0); return c;
 }
 function rotateCanvas(c, rot){ if(!rot) return c; const r=document.createElement('canvas'); const swap=rot%180!==0; r.width=swap?c.height:c.width; r.height=swap?c.width:c.height; const ctx=r.getContext('2d'); ctx.translate(r.width/2,r.height/2); ctx.rotate(rot*Math.PI/180); ctx.drawImage(c,-c.width/2,-c.height/2); return r; }
-function process(p){ if(!p.src){ return p.out; } p.out=rotateCanvas(applyFilter(warp(p.src,p.corners,p.a4),p.filter),p.rot); p.blob=null; return p.out; }
+// Which way is the text up? Scored on a 300 px copy for each rotation 0/90/180/270: text lines run across the page
+// (the profile of ink along the rows varies far more than along the columns), and printed text carries more ink above
+// the dense middle band of each line than below it (capitals, ascenders and Vietnamese accents sit on top, few letters
+// hang below). The best score wins, but 0 stays unless another rotation beats it clearly (blank pages, photos).
+function guessRotation(c, size=300){
+  const k=Math.min(1,size/Math.max(c.width,c.height)), w=Math.max(16,Math.round(c.width*k)), h=Math.max(16,Math.round(c.height*k));
+  const t=document.createElement('canvas'); t.width=w; t.height=h; const tx=t.getContext('2d',{willReadFrequently:true}); tx.drawImage(c,0,0,w,h);
+  const d=tx.getImageData(0,0,w,h).data, n=w*h, g=new Float32Array(n);
+  for(let i=0;i<n;i++) g[i]=0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2];
+  // ink = how much darker than the local paper (mean of a 15 px window); a 4 % border is left out (edge shadows)
+  const ii=new Float64Array((w+1)*(h+1)); for(let y=0;y<h;y++){ let rs=0; for(let x=0;x<w;x++){ rs+=g[y*w+x]; ii[(y+1)*(w+1)+x+1]=ii[y*(w+1)+x+1]+rs; } }
+  const mx=Math.round(w*0.04), my=Math.round(h*0.04), R=new Float64Array(h), C=new Float64Array(w); let inked=0;
+  for(let y=my;y<h-my;y++){ const y0=Math.max(0,y-7), y1=Math.min(h,y+8);
+    for(let x=mx;x<w-mx;x++){ const x0=Math.max(0,x-7), x1=Math.min(w,x+8);
+      const mean=(ii[y1*(w+1)+x1]-ii[y0*(w+1)+x1]-ii[y1*(w+1)+x0]+ii[y0*(w+1)+x0])/((y1-y0)*(x1-x0)), v=mean*0.92-g[y*w+x];
+      if(v>0){ R[y]+=v; C[x]+=v; if(v>8) inked++; } } }
+  if(inked<(w-2*mx)*(h-2*my)*0.003) return 0;   // (almost) no ink: nothing to go by
+  const rows=Array.from(R.slice(my,h-my),v=>v/(w-2*mx)), cols=Array.from(C.slice(mx,w-mx),v=>v/(h-2*my));
+  const variance=P=>{ const m=P.reduce((a,b)=>a+b,0)/P.length; return P.reduce((a,b)=>a+(b-m)*(b-m),0)/P.length; };
+  const vr=variance(rows), vc=variance(cols), V=vr/((vr+vc)||1);
+  // P read from the top of the text: lines = runs above half the mean; per line, ink above vs below its dense band
+  const topHeavy=P=>{ const on=0.5*P.reduce((a,b)=>a+b,0)/P.length; let above=0, below=0;
+    for(let a=0;a<P.length;){ if(P[a]<=on){ a++; continue; } let b=a; while(b+1<P.length&&P[b+1]>on) b++;
+      if(b-a>=2){ let pk=0; for(let i=a;i<=b;i++) pk=Math.max(pk,P[i]); let c0=a, c1=b; while(P[c0]<pk*0.5) c0++; while(P[c1]<pk*0.5) c1--;
+        for(let i=a;i<c0;i++) above+=P[i]; for(let i=c1+1;i<=b;i++) below+=P[i]; }
+      a=b+1; }
+    return (above-below)/((above+below)||1); };
+  // rotateCanvas turns clockwise: for 90 the tops of the letters point left in the photo, for 270 right
+  const score={0:V+0.5*topHeavy(rows), 180:V+0.5*topHeavy(rows.slice().reverse()), 90:1-V+0.5*topHeavy(cols), 270:1-V+0.5*topHeavy(cols.slice().reverse())};
+  let best=0; for(const r of [90,180,270]) if(score[r]>score[best]) best=r;
+  return score[best]-score[0]>0.1?best:0;
+}
+// a new page has rot null: the first run guesses it; after that it is the user's (Xoay 90° / Xoay 180°)
+function process(p){ if(!p.src){ return p.out; } const c=warp(p.src,p.corners,p.a4); if(p.rot==null) p.rot=guessRotation(c);
+  p.out=rotateCanvas(applyFilter(c,p.filter),p.rot); p.blob=null; return p.out; }
 
 /* ================= adding pages ================= */
-async function addCanvas(src){ const p={id:Date.now()+Math.random(), src, corners:autoCorners(src), filter:'enhance', a4:true, rot:0, out:null, ocr:'', _new:true}; process(p); return p; }
+async function addCanvas(src){ const p={id:Date.now()+Math.random(), src, corners:autoCorners(src), filter:'enhance', a4:true, rot:null, out:null, ocr:'', _new:true}; process(p); return p; }
 async function addFiles(files){
   if(!files||!files.length) return; busy('Đang đọc ảnh…'); const added=[];
   try{ for(const f of files){ added.push(await addCanvas(await loadFile(f))); } }catch(e){ busy(null); toast('Không đọc được ảnh: '+(e.message||e)); return; }
@@ -568,11 +602,13 @@ function renderConfirm(){
   const p=S.cur, left=S.queue.length;
   $('#title').textContent='Giữ trang này?'; $('#subtitle').textContent='Đã tự dò mép và làm thẳng'+(left?` · còn ${left} ảnh chờ`:'');
   main.innerHTML=`<div class="preview-wrap"><canvas id="pv"></canvas></div><p class="kv" id="pvinfo"></p>
+    <div class="toolbar"><button id="bRot180">Xoay 180°</button></div>
     <div class="section"><h2>Bộ lọc</h2>${chipsHtml('chips',p.filter)}</div>
     <div class="section"><h2>Khổ giấy</h2><div class="chips" id="a4chips"><button data-a4="1" aria-pressed="${p.a4!==false}">Ép khổ A4, full trang</button><button data-a4="0" aria-pressed="${p.a4===false}">Giữ tỉ lệ gốc (hoá đơn, giấy nhỏ)</button></div></div>
     <p class="hint">Mép dò chưa đúng? Bấm <b>Chỉnh góc</b> để kéo tay 4 góc.</p>`;
-  const show=()=>{ const pv=$('#pv'); const kk=Math.min(1,800/Math.max(p.out.width,p.out.height)); pv.width=p.out.width*kk; pv.height=p.out.height*kk; pv.getContext('2d').drawImage(p.out,0,0,pv.width,pv.height); $('#pvinfo').textContent=`Sau cắt: ${p.out.width} × ${p.out.height} px`; };
+  const show=()=>{ const pv=$('#pv'); const kk=Math.min(1,800/Math.max(p.out.width,p.out.height)); pv.width=p.out.width*kk; pv.height=p.out.height*kk; pv.getContext('2d').drawImage(p.out,0,0,pv.width,pv.height); $('#pvinfo').textContent=`Sau cắt: ${p.out.width} × ${p.out.height} px`+(p.rot?` · đã xoay ${p.rot}°`:''); };
   show();
+  $('#bRot180').onclick=()=>{ p.rot=(p.rot+180)%360; process(p); show(); };
   $('#chips').onclick=e=>{ const f=e.target.dataset.f; if(!f) return; p.filter=f; [...$('#chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.f===f)); process(p); show(); };
   $('#a4chips').onclick=e=>{ const v=e.target.dataset.a4; if(v===undefined) return; p.a4=v==='1'; [...$('#a4chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.a4===v)); process(p); show(); };
   footer.innerHTML=`<button id="bRetake" style="color:var(--warn)">Bỏ</button><button id="bEdit">Chỉnh góc</button><button class="primary" id="bKeep">Giữ trang</button><button class="primary" id="bKeepNext">Giữ &amp; chụp tiếp</button>`;

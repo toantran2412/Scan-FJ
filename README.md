@@ -22,7 +22,7 @@ Thư viện ngoài duy nhất tải lúc chạy: **tesseract.js 5.1.1** (jsDeliv
 ```
 Danh sách tài liệu (home)
  └─ ＋ Tài liệu mới ──► Camera (tự dò mép, tự chụp khi giấy đứng yên)
-                           └─► "Giữ trang này?" (xem kết quả, đổi bộ lọc, ép khổ A4, Chỉnh góc)
+                           └─► "Giữ trang này?" (xem kết quả, Xoay 180°, đổi bộ lọc, ép khổ A4, Chỉnh góc)
                                  ├─ Giữ trang ──► Danh sách trang của tài liệu
                                  └─ Giữ & chụp tiếp ──► Camera
  └─ Mở tài liệu ──► Danh sách trang: Chụp / Thư viện / Sửa / ↑↓ / Aa (OCR) / ✕ / Lưu-chia sẻ
@@ -38,8 +38,8 @@ Danh sách tài liệu (home)
    - **Cách 4 – dò theo đường thẳng** (`lineCorners()`), chạy khi kết quả trên chiếm > 70 % khung hoặc vùng sáng lớn nhất chạm ≥ 3 mép khung (vd. cuốn sổ / tờ giấy nằm trên xấp giấy trắng rộng hơn, cùng màu, không có bóng → hai thứ dính thành một vùng sáng): lấy điểm mép **giữa hai bề mặt sáng** (bỏ các điểm cách chỗ tối ≤ 2 px: chữ, nền gỗ, viền ngoài xấp giấy), ngưỡng gradient theo phân vị 90 % (tối thiểu 10) → Hough (góc bước 2°, khoảng cách bước 2 px), tối đa 12 đường mạnh nhất → tinh chỉnh từng đường bằng bình phương tối thiểu trên chính các điểm mép của nó (±4 px rồi ±2,5 px hai lần), gộp các đường trùng (≤ 3°, ≤ 4 px) → chọn 2 đường gần ngang + 2 đường gần dọc (chênh góc > 60°) tạo tứ giác: chứa tâm khung, diện tích 12–70 % khung, ≥ 70 % chiều dài mỗi cạnh có điểm mép, các đường **dừng ở góc** (đường chạy tiếp qua góc – như mép xấp giấy – không phải góc của vật), và vòng giấy quanh tứ giác (nới 25 %) **gần như trống** (điểm mực ≤ 0,5 %; để không cắt nhầm vào bảng in trên trang khi chụp sát một biểu mẫu) → lấy tứ giác lớn nhất; không có thì giữ kết quả cũ.
 3. `warp()` – biến đổi phối cảnh (homography từ `squareToQuad`, nội suy song tuyến). Nếu `p.a4 !== false` và tỉ lệ cạnh trong 0.5–0.95 (hoặc 1.05–2.0) thì **ép về khổ A4** (1:√2); cạnh dài tối đa 2600 px.
 4. `applyFilter()` – `enhance` (mặc định): ước lượng nền giấy theo ô (trung bình 30 % điểm sáng nhất mỗi ô, làm mượt 2 lần) rồi chia để nền trắng, chữ đen, giữ màu; `bw`: ngưỡng thích nghi theo trung bình cục bộ (ảnh tích phân); `gray`: kéo giãn 2–98 %; `none`.
-5. `rotateCanvas()` – xoay 0/90/180/270.
-6. `process(p)` chạy 3→5, ghi `p.out`, xoá `p.blob` (ảnh JPEG đã mã hoá để lưu).
+5. `rotateCanvas()` – xoay 0/90/180/270 (theo chiều kim đồng hồ). **Tự đoán chiều chữ** – `guessRotation()`, chỉ ở lần xử lý đầu của trang mới (`p.rot` = null), trên ảnh vừa `warp` (trước bộ lọc), thu nhỏ 300 px: mực = độ tối hơn nền giấy cục bộ (bỏ viền 4 %); mỗi hướng 0/90/180/270 được chấm điểm = độ "nằm ngang" của dòng chữ (phương sai lượng mực theo hàng ÷ tổng phương sai theo hàng và theo cột) + 0,5 × độ "nặng phía trên" (mỗi dòng: mực phía trên dải dày giữa dòng nhiều hơn phía dưới – chữ hoa, nét lên, dấu tiếng Việt nằm trên); chọn hướng điểm cao nhất, nhưng **giữ 0°** nếu gần như không có mực hoặc hướng tốt nhất không hơn 0° quá 0,1. Người dùng đổi được bằng **Xoay 180°** (màn "Giữ trang này?") và **Xoay 90°** (Chỉnh góc).
+6. `process(p)` chạy 3→5 (đoán chiều chữ nếu `p.rot` còn null), ghi `p.out`, xoá `p.blob` (ảnh JPEG đã mã hoá để lưu).
 
 Camera: `getUserMedia` (`facingMode: environment`, ideal 4032×3024 → máy tự chọn mức cao nhất). Mỗi 200 ms vẽ khung xuống 320 px, chạy `regionCorners`, vẽ viền lên overlay; 6 khung liên tiếp ổn định (dịch góc < 1.5 % cạnh) → tự chụp. Stream được **giữ mở** khi chuyển qua lại các màn hình của cùng tài liệu (chỉ tắt ở màn hình home / rời tab) để Safari không hỏi quyền lại.
 
@@ -61,6 +61,7 @@ IndexedDB `fresco-scan` phiên bản 2, hai store: `docs` (`id,name,created,orde
 
 1. **Biểu mẫu kẻ đen chụp sát** (tờ giấy chiếm > 70 % khung) có thể bị cắt vào cái bảng ở giữa thay vì cả trang: đường kẻ đen chia trang thành nhiều vùng sáng và cách dò ưu tiên vùng chứa tâm khung. **Lùi máy ra** (thấy cả mép giấy và một phần mặt bàn) là hết. Thử trên v11: tờ giấy chiếm ~88 % khung → cắt vào bảng; ~56 % và ~37 % khung → đúng cả trang. Lỗi có từ v10, chưa sửa.
 2. **Sổ lò xo / tờ giấy đặt trên xấp giấy trắng cùng màu, không có bóng:** chỉ cách dò theo đường thẳng (cách 4) tách được, và chỉ khi **cả 4 mép đều rõ**; gáy lò xo làm mất 1 mép nên app lấy cả xấp giấy. Hướng dẫn người dùng **đặt sổ / tờ giấy lên mặt bàn** rồi chụp. Thử trên v11: sổ lò xo trên xấp giấy → lấy cả xấp; cùng cuốn sổ đặt trên mặt bàn gỗ → đúng 4 góc.
+3. **Tự xoay theo chiều chữ** chỉ dựa vào dấu hiệu đơn giản: với **biểu mẫu nhiều bảng kẻ** và **chữ nhỏ / nhoè** có thể đoán ngược (trang ra lộn đầu) → bấm **Xoay 180°**; khi không chắc app giữ nguyên hướng chụp. Thử trên v12 (ảnh tự dựng): trang phẳng 8 kiểu × 4 hướng đúng 32/32, thêm 5 kiểu khó (chữ 9pt, nhoè nặng, tiếng Anh, trang trắng, trang có ảnh) đúng 18/20 – sai 2 ở chữ nhoè nặng; cảnh chụp trên nền gỗ đúng 15/18 – 2 trang ngược giữ nguyên 0° (không chắc), 1 biểu mẫu kẻ bảng nằm ngang ra lộn đầu. Cùng bộ cảnh chụp, thu nhỏ 600 px thay vì 300 px đúng 17/18.
 
 ## Kiểm tra
 
