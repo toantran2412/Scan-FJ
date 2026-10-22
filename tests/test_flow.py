@@ -22,6 +22,8 @@ góc trên trái chạm tờ giấy khác, nền gỗ tối) và xác nhận t�
 phía trong tờ trên cùng: so với góc thật, khoảng cách tới tâm tờ thật không được
 lớn hơn quá 0,3 % (lố ra ngoài) hay nhỏ hơn quá 2 % (lọt vào trong), tính theo
 tỉ lệ khung. Mép xấp giấy lố ra 0,8–1,6 % nên bị phân biệt với tờ trên cùng.
+Ảnh thử 3: cuốn sổ bìa trắng bằng 70 % kích thước xấp giấy, nằm trên xấp giấy
+trắng cùng màu, không có bóng; kiểm tra 4 góc cuốn sổ theo cùng cách đo.
 """
 import asyncio, itertools, math, os, random, sys, tempfile
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
@@ -63,15 +65,28 @@ def _place(canvas, sheet, center, angle, shadows=()):
     return [(cx + ca * (x - w / 2) - sa * (y - h / 2), cy + sa * (x - w / 2) + ca * (y - h / 2)) for x, y in [(0, 0), (w, 0), (w, h), (0, h)]]
 
 
+def _wood(rnd, W, H):
+    """Nền gỗ tối: vân ngang + hạt nhỏ (ảnh RGBA)."""
+    grain = Image.frombytes('L', (1, 180), rnd.randbytes(180)).resize((W, H), Image.BICUBIC)            # vân gỗ ngang
+    fine = Image.frombytes('L', (W // 4, H // 4), rnd.randbytes((W // 4) * (H // 4))).resize((W, H), Image.BICUBIC)
+    return ImageOps.colorize(Image.blend(grain, fine, 0.3), black=(30, 18, 10), white=(96, 62, 38)).convert('RGBA')
+
+
+def _finish(canvas, path):
+    """Trên sáng hơn dưới ~8 %, hơi nhoè như ảnh chụp; ghi JPEG ra path."""
+    W, H = canvas.size
+    light = Image.linear_gradient('L').resize((W, H)).point(lambda v: 255 - v * 20 // 255)
+    img = ImageChops.multiply(canvas.convert('RGB'), Image.merge('RGB', [light] * 3)).filter(ImageFilter.GaussianBlur(0.8))
+    img.save(path, quality=88)
+
+
 def make_stack_image(path):
     """Ảnh thử 2, khổ dọc như ảnh điện thoại: tờ A4 có chữ xoay 11° nằm trên xấp giấy trắng lớn hơn 3 % mỗi chiều,
     góc trên trái chạm một tờ giấy trắng khác, nền gỗ tối. Ghi JPEG ra path.
     Trả về 4 góc thật của tờ trên cùng theo tỉ lệ khung (x / rộng, y / cao)."""
     rnd = random.Random(2024)
     W, H = 1500, 2000
-    grain = Image.frombytes('L', (1, 180), rnd.randbytes(180)).resize((W, H), Image.BICUBIC)            # vân gỗ ngang
-    fine = Image.frombytes('L', (W // 4, H // 4), rnd.randbytes((W // 4) * (H // 4))).resize((W, H), Image.BICUBIC)
-    canvas = ImageOps.colorize(Image.blend(grain, fine, 0.3), black=(30, 18, 10), white=(96, 62, 38)).convert('RGBA')
+    canvas = _wood(rnd, W, H)
 
     pw, ph = 900, round(900 * 2 ** 0.5)     # tờ A4
     center, angle = (770, 1030), 11
@@ -105,10 +120,33 @@ def make_stack_image(path):
     _place(canvas, Image.new('RGBA', (pw, ph), (244, 243, 238, 255)), (ocx, ocy), -20, [(8, 10, 10, 110)])
 
     corners = _place(canvas, top, center, angle, [(0, 0, 2, 70), (3, 4, 5, 70)])
+    _finish(canvas, path)
+    return [(x / W, y / H) for x, y in corners]
 
-    light = Image.linear_gradient('L').resize((W, H)).point(lambda v: 255 - v * 20 // 255)   # trên sáng hơn dưới ~8 %
-    img = ImageChops.multiply(canvas.convert('RGB'), Image.merge('RGB', [light] * 3)).filter(ImageFilter.GaussianBlur(0.8))
-    img.save(path, quality=88)
+
+def make_notebook_image(path):
+    """Ảnh thử 3, khổ dọc: cuốn sổ bìa trắng bằng 70 % kích thước xấp giấy, nằm trên xấp giấy trắng cùng màu,
+    không có bóng – chỉ có mép sổ là một dải hơi xám mảnh; xấp giấy chiếm ~87 % khung, nền gỗ tối. Ghi JPEG ra path.
+    Trả về 4 góc thật của cuốn sổ theo tỉ lệ khung (x / rộng, y / cao)."""
+    rnd = random.Random(7)
+    W, H = 1500, 2000
+    canvas = _wood(rnd, W, H)
+    white = (240, 239, 235, 255)
+    sw, sh = 1380, 1900                     # xấp giấy, xoay 2°
+    for dx, dy, da, shadows in [(5, 4, 0.3, [(14, 18, 16, 150)]), (-3, 2, -0.2, [(0, 0, 2, 60)]), (0, 0, 0, [(0, 0, 2, 60)])]:
+        _place(canvas, Image.new('RGBA', (sw, sh), white), (750 + dx, 1000 + dy), 2 + da, shadows)
+
+    nw, nh = round(sw * 0.7), round(sh * 0.7)   # cuốn sổ 70 %, xoay 5°, cùng màu với xấp giấy, không bóng
+    book = Image.new('RGBA', (nw, nh), white)
+    d = ImageDraw.Draw(book)
+    d.rectangle((0, 0, nw - 1, nh - 1), outline=(214, 213, 208, 255), width=8)      # mép sổ hơi xám
+    d.text((250, 250), 'SỔ GHI CHÉP', font=_font(80, True), fill=(25, 25, 25))
+    d.rectangle((150, 520, nw - 150, 760), outline=(60, 60, 60), width=4)            # ô nhãn in trên bìa
+    d.text((190, 560), 'Bộ phận: Sản xuất', font=_font(40), fill=(40, 40, 40))
+    d.text((190, 650), 'Năm: 2026', font=_font(40), fill=(40, 40, 40))
+    d.text((nw // 2 - 90, nh - 190), 'FRESCO', font=_font(44, True), fill=(60, 60, 60))
+    corners = _place(canvas, book, (770, 1020), 5)
+    _finish(canvas, path)
     return [(x / W, y / H) for x, y in corners]
 
 
@@ -124,6 +162,29 @@ def corner_offsets(truth, found):
             best = (err, list(zip(truth, perm)))
     cx, cy = sum(t[0] for t in truth) / 4, sum(t[1] for t in truth) / 4
     return [(t, f, math.hypot(f[0] - cx, f[1] - cy) - math.hypot(t[0] - cx, t[1] - cy)) for t, f in best[1]]
+
+
+async def check_corners(pg, title, make):
+    """Dựng ảnh thử bằng make(path), nạp vào màn Chụp, kiểm tra từng góc dò được nằm phía trong vật thật:
+    lố ra ngoài ≤ 0,3 %, lọt vào trong ≤ 2 % (theo khung)."""
+    print(title)
+    while await pg.evaluate('S.view') != 'home':
+        await pg.click('#btnBack')
+    with tempfile.TemporaryDirectory() as tmp:
+        image = os.path.join(tmp, 'anh_thu.jpg')
+        truth = make(image)
+        await pg.click('#bNew')
+        await pg.wait_for_selector('#fileLib', state='attached')
+        await pg.set_input_files('#fileLib', image)
+        await pg.wait_for_selector('#bKeep', timeout=60000)
+    found = await pg.evaluate("S.cur.corners.map(c=>[c.x/S.cur.src.width, c.y/S.cur.src.height])")
+    rows = corner_offsets(truth, found)
+    print('  cho phép: lố ra ngoài ≤ 0,3 %, lọt vào trong ≤ 2 % (theo khung)')
+    for t, f, d in rows:
+        print(f'  góc thật ({t[0]:.3f}, {t[1]:.3f}) | dò được ({f[0]:.3f}, {f[1]:.3f}) | '
+              + (f'lố ra {d * 100:.2f} %' if d > 0 else f'lọt vào {-d * 100:.2f} %'))
+    bad = [d for _, _, d in rows if d > 0.003 or d < -0.02]
+    assert not bad, 'góc dò được lố ra quá 0,3 % hoặc lọt vào quá 2 %: ' + ', '.join(f'{d * 100:+.2f} %' for d in bad)
 
 
 async def add_page_from_file(pg, image):
@@ -185,22 +246,8 @@ async def main(image):
         print('  tài liệu còn lại:', list(zip(names, metas)))
         assert len(names) == 2, f'mong 2 tài liệu sau khi tải lại, có {len(names)}'
 
-        print('Ảnh thử 2: tờ giấy trên xấp giấy, góc trên trái chạm tờ khác')
-        with tempfile.TemporaryDirectory() as tmp:
-            image2 = os.path.join(tmp, 'giay_tren_xap.jpg')
-            truth = make_stack_image(image2)
-            await pg.click('#bNew')
-            await pg.wait_for_selector('#fileLib', state='attached')
-            await pg.set_input_files('#fileLib', image2)
-            await pg.wait_for_selector('#bKeep', timeout=60000)
-        found = await pg.evaluate("S.cur.corners.map(c=>[c.x/S.cur.src.width, c.y/S.cur.src.height])")
-        rows = corner_offsets(truth, found)
-        print('  cho phép: lố ra ngoài ≤ 0,3 %, lọt vào trong ≤ 2 % (theo khung)')
-        for t, f, d in rows:
-            print(f'  góc thật ({t[0]:.3f}, {t[1]:.3f}) | dò được ({f[0]:.3f}, {f[1]:.3f}) | '
-                  + (f'lố ra {d * 100:.2f} %' if d > 0 else f'lọt vào {-d * 100:.2f} %'))
-        bad = [d for _, _, d in rows if d > 0.003 or d < -0.02]
-        assert not bad, 'góc dò được lố ra quá 0,3 % hoặc lọt vào quá 2 %: ' + ', '.join(f'{d * 100:+.2f} %' for d in bad)
+        await check_corners(pg, 'Ảnh thử 2: tờ giấy trên xấp giấy, góc trên trái chạm tờ khác', make_stack_image)
+        await check_corners(pg, 'Ảnh thử 3: cuốn sổ trên xấp giấy trắng cùng màu, không có bóng', make_notebook_image)
 
         await browser.close()
         if errors:
