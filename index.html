@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
+<title>Fresco Scan</title>
+<meta name="description" content="Chụp tài liệu bằng điện thoại, tự dò mép, làm thẳng, xuất PDF và chia sẻ.">
+<meta name="theme-color" content="#1f5f4a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Fresco Scan">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<script src="jspdf.umd.min.js"></script>
+<style>
+:root{
+  --bg:#f3f1ec; --panel:#ffffff; --fg:#1d1b17; --muted:#6b6660; --line:#d9d4ca;
+  --accent:#1f5f4a; --accent-fg:#ffffff; --accent-soft:#e0efe8;
+  --warn:#9a4a12; --handle:#ff8a2b;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root{
+  --bg:#15171a; --panel:#1f2226; --fg:#eceae4; --muted:#9a968e; --line:#33373d;
+  --accent:#5fc49b; --accent-fg:#0d1f17; --accent-soft:#1d3a2e; --warn:#f0a35e; --handle:#ffa24d; color-scheme:dark } }
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px;line-height:1.45;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
+button{font:inherit;cursor:pointer;border:0;border-radius:10px;padding:10px 14px;background:var(--panel);color:var(--fg);box-shadow:inset 0 0 0 1px var(--line);-webkit-tap-highlight-color:transparent}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);color:var(--accent-fg);box-shadow:none;font-weight:600}
+button.ghost{background:transparent;box-shadow:none;color:var(--accent);font-weight:500}
+button:disabled{opacity:.45;cursor:default}
+input[type=text],textarea{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
+textarea{min-height:160px;resize:vertical}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding-block:10px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;align-items:center;justify-content:space-between;gap:10px}
+header h1{font-size:17px;margin:0;font-weight:700}
+header .sub{font-size:12px;color:var(--muted)}
+main{flex:1;overflow-y:auto;padding-block:14px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main.cam{padding:0;background:#000;display:flex;flex-direction:column}
+footer{position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding-block:10px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;flex-wrap:wrap}
+footer button{flex:1 1 auto;min-width:0}
+.hint{color:var(--muted);font-size:13px}
+.empty{text-align:center;padding:40px 10px;color:var(--muted)}
+.empty strong{display:block;color:var(--fg);font-size:17px;margin-bottom:6px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+.page{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.page .thumb{aspect-ratio:3/4;max-width:100%;background:#8a8580;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.page .thumb canvas{max-width:100%;max-height:100%;display:block}
+.page .meta{padding:8px 10px;display:flex;justify-content:space-between;align-items:center;font-size:13px}
+.page .meta .n{font-weight:600}
+.page .ops{display:flex;gap:4px;padding:0 6px 8px}
+.page .ops button{padding:6px 0;font-size:13px;flex:1;border-radius:8px}
+.page.ocr-done .meta .n::after{content:" · có chữ";font-weight:400;color:var(--accent)}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.chips button{white-space:nowrap;padding:8px 12px;font-size:13px;border-radius:999px}
+.chips button[aria-pressed=true]{background:var(--accent-soft);color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);font-weight:600}
+.stage{position:relative;background:#2b2a28;border-radius:12px;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;max-width:100%}
+.stage canvas{display:block;width:100%;height:auto}
+.stage svg{position:absolute;inset:0;width:100%;height:100%}
+.stage polygon{fill:rgba(255,138,43,.15);stroke:var(--handle);stroke-width:2;vector-effect:non-scaling-stroke}
+.stage circle{fill:var(--handle);stroke:#fff;stroke-width:2;vector-effect:non-scaling-stroke}
+.stage circle.hit{fill:transparent;stroke:none}
+.toolbar{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toolbar button{flex:1 1 auto;font-size:14px;padding:9px 10px}
+.section{margin-top:16px}
+.section h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px;font-weight:600}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:13px;z-index:20;max-width:90vw;text-align:center}
+.busy{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:30;color:#fff;font-weight:600;flex-direction:column;gap:10px;text-align:center;padding:20px}
+.spin{width:34px;height:34px;border:4px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.preview-wrap{background:#8a8580;border-radius:12px;padding:8px;display:flex;justify-content:center}
+.preview-wrap canvas{max-width:100%;max-height:60vh;display:block;border-radius:4px}
+.kv{font-size:13px;color:var(--muted)}
+/* live camera */
+.camwrap{position:relative;flex:1;min-height:0;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.camwrap video{max-width:100%;max-height:100%;display:block}
+.camwrap canvas.ov{position:absolute;pointer-events:none}
+.camstatus{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.55);color:#fff;padding:6px 14px;border-radius:999px;font-size:13px;white-space:nowrap;max-width:92%;overflow:hidden;text-overflow:ellipsis}
+.camstatus.ok{background:rgba(31,95,74,.85)}
+.shutter{width:72px;height:72px;border-radius:50%;background:#fff;box-shadow:0 0 0 5px rgba(255,255,255,.35);padding:0;flex:0 0 72px !important}
+.shutter.counting{background:var(--handle)}
+.camfoot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.camfoot button{flex:1 1 0}
+.switch{display:flex;align-items:center;gap:8px;font-size:14px}
+.switch input{width:20px;height:20px;accent-color:var(--accent)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+</style>
+</head>
+<body>
+<header>
+  <div><h1 id="title">Fresco Scan</h1><div class="sub" id="subtitle">Chụp tài liệu, cắt thẳng, xuất PDF</div></div>
+  <button class="ghost" id="btnBack" hidden>‹ Danh sách</button>
+</header>
+<main id="main"></main>
+<footer id="footer"></footer>
+<input type="file" id="fileCam" accept="image/*" capture="environment" hidden>
+<input type="file" id="fileLib" accept="image/*" multiple hidden>
+
+<script>
+'use strict';
+/* ================= state ================= */
+const S = {
+  pages: [],          // {id, src:canvas|null, corners, filter, rot, out:canvas, ocr:''}
+  view: 'list', cur: null, queue: [],
+  docName: 'Scan ' + new Date().toISOString().slice(0,10),
+  quality: 'medium', autoShot: true,
+  stream: null, camTimer: null,
+};
+const $ = s => document.querySelector(s);
+const main = $('#main'), footer = $('#footer');
+let toastT;
+function toast(m, ms=2500){ let t=$('.toast'); if(!t){t=document.createElement('div');t.className='toast';document.body.appendChild(t);} t.textContent=m; clearTimeout(toastT); toastT=setTimeout(()=>t.remove(),ms); }
+function busy(msg){ let b=$('.busy'); if(!msg){ if(b)b.remove(); return; } if(!b){b=document.createElement('div');b.className='busy';b.innerHTML='<div class="spin"></div><div class="t"></div>';document.body.appendChild(b);} b.querySelector('.t').textContent=msg; }
+function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ================= persistence (IndexedDB) ================= */
+const DB = { name:'fresco-scan', store:'pages' };
+function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DB.name,1); r.onupgradeneeded=()=>r.result.createObjectStore(DB.store,{keyPath:'id'}); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function savePages(){
+  try{
+    // encode every page first: an IndexedDB transaction closes if we await inside it
+    const rows=[]; for(let i=0;i<S.pages.length;i++){ const p=S.pages[i]; const blob=await new Promise(r=>p.out.toBlob(r,'image/jpeg',0.9)); rows.push({id:p.id, order:i, blob, ocr:p.ocr||'', filter:p.filter, rot:p.rot}); }
+    const db=await idb(); const tx=db.transaction(DB.store,'readwrite'); const st=tx.objectStore(DB.store); st.clear(); rows.forEach(r=>st.put(r));
+    await new Promise((res,rej)=>{ tx.oncomplete=res; tx.onerror=()=>rej(tx.error); });
+    try{ localStorage.setItem('fresco-scan-doc', JSON.stringify({docName:S.docName, quality:S.quality, autoShot:S.autoShot})); }catch(e){}
+  }catch(e){ console.warn('save failed',e); }
+}
+async function loadPages(){
+  try{ const s=JSON.parse(localStorage.getItem('fresco-scan-doc')||'{}'); if(s.docName)S.docName=s.docName; if(s.quality)S.quality=s.quality; if(typeof s.autoShot==='boolean')S.autoShot=s.autoShot; }catch(e){}
+  try{ const db=await idb(); const rows=await new Promise((res,rej)=>{ const r=db.transaction(DB.store).objectStore(DB.store).getAll(); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
+    rows.sort((a,b)=>a.order-b.order);
+    for(const r of rows){ const bmp=await createImageBitmap(r.blob); const c=document.createElement('canvas'); c.width=bmp.width; c.height=bmp.height; c.getContext('2d').drawImage(bmp,0,0); bmp.close&&bmp.close();
+      S.pages.push({id:r.id, src:null, corners:null, filter:r.filter, rot:r.rot, out:c, ocr:r.ocr||''}); }
+  }catch(e){ console.warn('load failed',e); }
+}
+
+/* ================= image loading ================= */
+async function loadFile(file){
+  const MAX=2400; let bmp;
+  try{ bmp=await createImageBitmap(file,{imageOrientation:'from-image'}); }
+  catch(e){ bmp=await new Promise((res,rej)=>{ const u=URL.createObjectURL(file); const im=new Image(); im.onload=()=>{URL.revokeObjectURL(u);res(im)}; im.onerror=rej; im.src=u; }); }
+  const w=bmp.width||bmp.naturalWidth, h=bmp.height||bmp.naturalHeight; const k=Math.min(1,MAX/Math.max(w,h));
+  const c=document.createElement('canvas'); c.width=Math.round(w*k); c.height=Math.round(h*k); c.getContext('2d').drawImage(bmp,0,0,c.width,c.height); if(bmp.close)bmp.close(); return c;
+}
+
+/* ================= paper detection ================= */
+function defaultCorners(src){ const W=src.width,H=src.height; return [{x:W*.04,y:H*.04},{x:W*.96,y:H*.04},{x:W*.96,y:H*.96},{x:W*.04,y:H*.96}]; }
+function autoCorners(src){ try{ const q=regionCorners(src); if(q) return q; }catch(e){} return defaultCorners(src); }
+// paper = largest bright connected region; fit its 4 boundary lines; intersect for corners. Returns null when unsure.
+function regionCorners(src){
+  const W=src.width, H=src.height;
+  const k=Math.min(1,400/Math.max(W,H)); const w=Math.max(8,Math.round(W*k)), h=Math.max(8,Math.round(H*k));
+  const c=document.createElement('canvas'); c.width=w; c.height=h; const ctx=c.getContext('2d',{willReadFrequently:true}); ctx.drawImage(src,0,0,w,h);
+  const d=ctx.getImageData(0,0,w,h).data; const n=w*h; const g=new Uint8Array(n); const hist=new Uint32Array(256);
+  for(let i=0;i<n;i++){ const v=(0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2])|0; g[i]=v; hist[v]++; }
+  let sum=0; for(let v=0;v<256;v++) sum+=v*hist[v];
+  let sumB=0,wB=0,best=0,thr=128;
+  for(let v=0;v<256;v++){ wB+=hist[v]; if(!wB) continue; const wF=n-wB; if(!wF) break; sumB+=v*hist[v]; const mB=sumB/wB,mF=(sum-sumB)/wF; const b=wB*wF*(mB-mF)*(mB-mF); if(b>best){best=b;thr=v;} }
+  let acc=0,p95=255; for(let v=255;v>=0;v--){ acc+=hist[v]; if(acc>n*0.05){p95=v;break;} }
+  const t=Math.round((thr+p95)/2);
+  let m=new Uint8Array(n); for(let i=0;i<n;i++) m[i]=g[i]>t?1:0;
+  const morph=(src,erode)=>{ const o=new Uint8Array(n); for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ let s=0; for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++) s+=src[(y+dy)*w+x+dx]; o[y*w+x]=erode?(s===9?1:0):(s>0?1:0); } return o; };
+  m=morph(morph(m,true),false);
+  const lab=new Int32Array(n); let bestId=0,bestSize=0,id=0; const stack=new Int32Array(n);
+  for(let s0=0;s0<n;s0++){ if(!m[s0]||lab[s0]) continue; id++; let sp=0,size=0; stack[sp++]=s0; lab[s0]=id;
+    while(sp){ const i=stack[--sp]; size++; const x=i%w, y=(i-x)/w;
+      if(x>0&&m[i-1]&&!lab[i-1]){lab[i-1]=id;stack[sp++]=i-1;} if(x<w-1&&m[i+1]&&!lab[i+1]){lab[i+1]=id;stack[sp++]=i+1;}
+      if(y>0&&m[i-w]&&!lab[i-w]){lab[i-w]=id;stack[sp++]=i-w;} if(y<h-1&&m[i+w]&&!lab[i+w]){lab[i+w]=id;stack[sp++]=i+w;} }
+    if(size>bestSize){bestSize=size;bestId=id;} }
+  if(bestSize < n*0.12) return null;
+  let x0=w,x1=0,y0=h,y1=0; for(let i=0;i<n;i++){ if(lab[i]!==bestId) continue; const x=i%w,y=(i-x)/w; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+  if(x1-x0<w*.2||y1-y0<h*.2) return null;
+  const L=[],R=[],T=[],B=[];
+  for(let y=Math.round(y0+(y1-y0)*.1); y<=y1-(y1-y0)*.1; y++){ let a=-1,b=-1; for(let x=x0;x<=x1;x++){ if(lab[y*w+x]===bestId){ if(a<0)a=x; b=x; } } if(a>=0){L.push({x:a,y});R.push({x:b,y});} }
+  for(let x=Math.round(x0+(x1-x0)*.1); x<=x1-(x1-x0)*.1; x++){ let a=-1,b=-1; for(let y=y0;y<=y1;y++){ if(lab[y*w+x]===bestId){ if(a<0)a=y; b=y; } } if(a>=0){T.push({x,y:a});B.push({x,y:b});} }
+  const fit=(arr,horiz)=>{ const get=p=>horiz?[p.x,p.y]:[p.y,p.x];
+    const ls=a=>{ const nn=a.length; let sx=0,sy=0,sxx=0,sxy=0; for(const p of a){const [u,v]=get(p);sx+=u;sy+=v;sxx+=u*u;sxy+=u*v;} const dd=nn*sxx-sx*sx; if(Math.abs(dd)<1e-9) return null; const mm=(nn*sxy-sx*sy)/dd; return {a:mm,b:(sy-mm*sx)/nn}; };
+    let a=arr, Lf=null;
+    for(let it=0;it<2;it++){ if(a.length<4) return null; Lf=ls(a); if(!Lf) return null; const res=a.map(p=>{const [u,v]=get(p);return Math.abs(v-(Lf.a*u+Lf.b));}); const med=[...res].sort((p,q)=>p-q)[res.length>>1]; a=a.filter((p,i)=>res[i]<=Math.max(2.5,med*2.5)); }
+    return Lf; };
+  const tl=fit(T,true), bl=fit(B,true), ll=fit(L,false), rl=fit(R,false);
+  if(!tl||!bl||!ll||!rl) return null;
+  const X=(hz,vt)=>{ const y=(hz.a*vt.b+hz.b)/(1-hz.a*vt.a); return {x:vt.a*y+vt.b,y}; };
+  let q=[X(tl,ll),X(tl,rl),X(bl,rl),X(bl,ll)].map(p=>({x:Math.max(0,Math.min(w,p.x)),y:Math.max(0,Math.min(h,p.y))}));
+  const area=Math.abs((q[0].x*q[1].y-q[1].x*q[0].y)+(q[1].x*q[2].y-q[2].x*q[1].y)+(q[2].x*q[3].y-q[3].x*q[2].y)+(q[3].x*q[0].y-q[0].x*q[3].y))/2;
+  if(area < n*0.12) return null;
+  const sx=W/w, sy=H/h; return q.map(p=>({x:p.x*sx,y:p.y*sy}));
+}
+
+/* ================= perspective warp, filters, rotation ================= */
+function squareToQuad(p){
+  const x0=p[0].x,y0=p[0].y,x1=p[1].x,y1=p[1].y,x2=p[2].x,y2=p[2].y,x3=p[3].x,y3=p[3].y;
+  const dx1=x1-x2,dx2=x3-x2,dx3=x0-x1+x2-x3,dy1=y1-y2,dy2=y3-y2,dy3=y0-y1+y2-y3; const det=dx1*dy2-dx2*dy1;
+  const g=(dx3*dy2-dx2*dy3)/det, h=(dx1*dy3-dx3*dy1)/det;
+  return [x1-x0+g*x1, x3-x0+h*x3, x0, y1-y0+g*y1, y3-y0+h*y3, y0, g, h, 1];
+}
+function warp(src, corners){
+  const dist=(p,q)=>Math.hypot(p.x-q.x,p.y-q.y);
+  let W=Math.round(Math.max(dist(corners[0],corners[1]),dist(corners[3],corners[2]))), H=Math.round(Math.max(dist(corners[0],corners[3]),dist(corners[1],corners[2])));
+  const k=Math.min(1,2000/Math.max(W,H)); W=Math.max(2,Math.round(W*k)); H=Math.max(2,Math.round(H*k));
+  const sd=src.getContext('2d',{willReadFrequently:true}).getImageData(0,0,src.width,src.height).data; const sw=src.width, sh=src.height;
+  const out=document.createElement('canvas'); out.width=W; out.height=H; const octx=out.getContext('2d'); const od=octx.createImageData(W,H); const o=od.data; const M=squareToQuad(corners);
+  for(let y=0;y<H;y++){ const v=(y+0.5)/H; for(let x=0;x<W;x++){ const u=(x+0.5)/W; const den=M[6]*u+M[7]*v+1;
+    let sx=(M[0]*u+M[1]*v+M[2])/den-0.5, sy=(M[3]*u+M[4]*v+M[5])/den-0.5;
+    if(sx<0)sx=0; if(sy<0)sy=0; if(sx>sw-1.001)sx=sw-1.001; if(sy>sh-1.001)sy=sh-1.001;
+    const ix=sx|0,iy=sy|0,fx=sx-ix,fy=sy-iy; const i00=(iy*sw+ix)*4,i10=i00+4,i01=i00+sw*4,i11=i01+4,oi=(y*W+x)*4;
+    for(let ch=0;ch<3;ch++) o[oi+ch]=(sd[i00+ch]*(1-fx)+sd[i10+ch]*fx)*(1-fy)+(sd[i01+ch]*(1-fx)+sd[i11+ch]*fx)*fy;
+    o[oi+3]=255; } }
+  octx.putImageData(od,0,0); return out;
+}
+function applyFilter(c, filter){
+  if(filter==='none') return c;
+  const ctx=c.getContext('2d'); const id=ctx.getImageData(0,0,c.width,c.height); const d=id.data; const n=d.length/4;
+  if(filter==='gray'||filter==='bw'){
+    const g=new Uint8ClampedArray(n); for(let i=0;i<n;i++) g[i]=0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2];
+    const hist=new Uint32Array(256); for(let i=0;i<n;i++)hist[g[i]]++; let lo=0,hi=255,acc=0;
+    for(let v=0;v<256;v++){acc+=hist[v]; if(acc>n*.02){lo=v;break;}} acc=0; for(let v=255;v>=0;v--){acc+=hist[v]; if(acc>n*.02){hi=v;break;}}
+    const range=Math.max(1,hi-lo);
+    if(filter==='gray'){ for(let i=0;i<n;i++){ const v=Math.max(0,Math.min(255,(g[i]-lo)*255/range)); d[i*4]=d[i*4+1]=d[i*4+2]=v; } }
+    else { const w=c.width,h=c.height,r=Math.max(8,Math.round(Math.min(w,h)/40)); const ii=new Float64Array((w+1)*(h+1));
+      for(let y=1;y<=h;y++){ let rs=0; for(let x=1;x<=w;x++){ rs+=g[(y-1)*w+(x-1)]; ii[y*(w+1)+x]=ii[(y-1)*(w+1)+x]+rs; } }
+      for(let y=0;y<h;y++){ const y0=Math.max(0,y-r),y1=Math.min(h,y+r+1); for(let x=0;x<w;x++){ const x0=Math.max(0,x-r),x1=Math.min(w,x+r+1);
+        const mean=(ii[y1*(w+1)+x1]-ii[y0*(w+1)+x1]-ii[y1*(w+1)+x0]+ii[y0*(w+1)+x0])/((y1-y0)*(x1-x0)); const i=y*w+x; const v=g[i]<mean*0.88?0:255; d[i*4]=d[i*4+1]=d[i*4+2]=v; } } }
+  } else if(filter==='enhance'){ for(let i=0;i<n*4;i++){ if((i&3)===3) continue; d[i]=Math.max(0,Math.min(255,(d[i]-128)*1.35+140)); } }
+  ctx.putImageData(id,0,0); return c;
+}
+function rotateCanvas(c, rot){ if(!rot) return c; const r=document.createElement('canvas'); const swap=rot%180!==0; r.width=swap?c.height:c.width; r.height=swap?c.width:c.height; const ctx=r.getContext('2d'); ctx.translate(r.width/2,r.height/2); ctx.rotate(rot*Math.PI/180); ctx.drawImage(c,-c.width/2,-c.height/2); return r; }
+function process(p){ if(!p.src){ return p.out; } p.out=rotateCanvas(applyFilter(warp(p.src,p.corners),p.filter),p.rot); return p.out; }
+
+/* ================= adding pages ================= */
+async function addCanvas(src){ const p={id:Date.now()+Math.random(), src, corners:autoCorners(src), filter:'enhance', rot:0, out:null, ocr:'', _new:true}; process(p); return p; }
+async function addFiles(files){
+  if(!files||!files.length) return; busy('Đang đọc ảnh…'); const added=[];
+  try{ for(const f of files){ added.push(await addCanvas(await loadFile(f))); } }catch(e){ busy(null); toast('Không đọc được ảnh: '+(e.message||e)); return; }
+  busy(null); S.queue.push(...added); nextConfirm();
+}
+function nextConfirm(){ if(S.queue.length){ S.cur=S.queue.shift(); S.view='confirm'; render(); } else { S.cur=null; S.view='list'; render(); } }
+$('#fileCam').addEventListener('change',e=>{ addFiles(e.target.files); e.target.value=''; });
+$('#fileLib').addEventListener('change',e=>{ addFiles(e.target.files); e.target.value=''; });
+
+/* ================= render ================= */
+function render(){
+  stopCamera();
+  main.className='';
+  $('#btnBack').hidden = S.view==='list';
+  ({list:renderList, edit:renderEdit, confirm:renderConfirm, save:renderSave, ocr:renderOcr, camera:renderCamera})[S.view]();
+}
+$('#btnBack').onclick=()=>{ S.queue=[]; S.cur=null; S.view='list'; render(); };
+const FILTERS=[['enhance','Rõ nét'],['bw','Đen trắng'],['gray','Xám'],['none','Gốc']];
+const chipsHtml=(id,cur)=>`<div class="chips" id="${id}">${FILTERS.map(([k,l])=>`<button data-f="${k}" aria-pressed="${cur===k}">${l}</button>`).join('')}</div>`;
+
+function renderList(){
+  $('#title').textContent='Fresco Scan'; $('#subtitle').textContent=S.pages.length?S.pages.length+' trang · '+S.docName:'Chụp tài liệu, cắt thẳng, xuất PDF';
+  main.innerHTML='';
+  if(!S.pages.length){
+    main.innerHTML=`<div class="empty"><strong>Chưa có trang nào</strong>Bấm <b>Chụp</b> để mở camera: đưa tờ giấy vào khung, app tự dò mép và tự chụp khi giấy đứng yên.<br><span class="hint">Mỗi trang được cắt thẳng, lọc rõ chữ, rồi hỏi bạn có giữ không. Xong thì ghép thành PDF để lưu hoặc gửi Zalo / Mail.</span></div>`;
+  } else {
+    const sec=document.createElement('div');
+    sec.innerHTML=`<div class="section" style="margin-top:0"><h2>Tên tài liệu</h2><input type="text" id="docName"></div><div class="section"><h2>Các trang</h2><div class="grid" id="grid"></div></div>`;
+    main.appendChild(sec);
+    const inp=$('#docName'); inp.value=S.docName; inp.oninput=()=>{S.docName=inp.value||'Scan'; $('#subtitle').textContent=S.pages.length+' trang · '+S.docName; savePages();};
+    const grid=$('#grid');
+    S.pages.forEach((p,i)=>{
+      const el=document.createElement('div'); el.className='page'+(p.ocr?' ocr-done':'');
+      el.innerHTML=`<div class="thumb"></div><div class="meta"><span class="n">Trang ${i+1}</span><button class="ghost" style="padding:2px 6px" data-a="edit" ${p.src?'':'disabled'}>Sửa</button></div>
+        <div class="ops"><button data-a="up" ${i===0?'disabled':''}>↑</button><button data-a="down" ${i===S.pages.length-1?'disabled':''}>↓</button><button data-a="ocr">Aa</button><button data-a="del" style="color:var(--warn)">✕</button></div>`;
+      const th=document.createElement('canvas'); const k=Math.min(1,300/Math.max(p.out.width,p.out.height)); th.width=p.out.width*k; th.height=p.out.height*k; th.getContext('2d').drawImage(p.out,0,0,th.width,th.height);
+      el.querySelector('.thumb').appendChild(th);
+      el.onclick=e=>{ const a=e.target.dataset.a; if(!a) return;
+        if(a==='edit'){ S.cur=p; S.view='edit'; render(); }
+        else if(a==='up'){ S.pages.splice(i,1); S.pages.splice(i-1,0,p); savePages(); render(); }
+        else if(a==='down'){ S.pages.splice(i,1); S.pages.splice(i+1,0,p); savePages(); render(); }
+        else if(a==='del'){ S.pages.splice(i,1); savePages(); render(); toast('Đã xoá trang '+(i+1)); }
+        else if(a==='ocr'){ S.cur=p; S.view='ocr'; render(); } };
+      grid.appendChild(el);
+    });
+    const note=document.createElement('p'); note.className='hint'; note.textContent='Các trang được giữ lại trên máy này kể cả khi đóng app. Bấm "Lưu / chia sẻ" để xuất PDF.'; main.appendChild(note);
+  }
+  footer.innerHTML=`<button class="primary" id="bCam">📷 Chụp</button><button id="bLib">Thư viện</button>${S.pages.length?`<button class="primary" id="bPdf">Lưu / chia sẻ (${S.pages.length})</button><button id="bClear" style="flex:0 0 auto;color:var(--warn)">Xoá hết</button>`:''}`;
+  $('#bCam').onclick=()=>{ if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){ S.view='camera'; render(); } else $('#fileCam').click(); };
+  $('#bLib').onclick=()=>$('#fileLib').click();
+  const bp=$('#bPdf'); if(bp) bp.onclick=()=>{S.view='save';render();};
+  const bc=$('#bClear'); if(bc) bc.onclick=()=>{ if(bc.dataset.arm){ S.pages=[]; savePages(); render(); toast('Đã xoá tất cả'); } else { bc.dataset.arm='1'; bc.textContent='Chắc chắn xoá?'; setTimeout(()=>{ if(bc.isConnected){ delete bc.dataset.arm; bc.textContent='Xoá hết'; } },3000); } };
+}
+
+/* ================= live camera with auto capture ================= */
+function stopCamera(){ if(S.camTimer){ clearInterval(S.camTimer); S.camTimer=null; } if(S.stream){ S.stream.getTracks().forEach(t=>t.stop()); S.stream=null; } }
+async function renderCamera(){
+  $('#title').textContent='Chụp'; $('#subtitle').textContent='Đưa giấy vào khung, giữ yên máy';
+  main.className='cam';
+  main.innerHTML=`<div class="camwrap"><video id="vid" autoplay playsinline muted></video><canvas class="ov" id="ov"></canvas><div class="camstatus" id="cs">Đang mở camera…</div></div>`;
+  footer.innerHTML=`<div class="camfoot" style="width:100%"><label class="switch"><input type="checkbox" id="auto"> Tự chụp</label><button class="shutter" id="shot" aria-label="Chụp"></button><button id="bFile">Ảnh có sẵn</button></div>`;
+  const auto=$('#auto'); auto.checked=S.autoShot; auto.onchange=()=>{S.autoShot=auto.checked; savePages();};
+  $('#bFile').onclick=()=>$('#fileLib').click();
+  const vid=$('#vid'), ov=$('#ov'), cs=$('#cs');
+  try{
+    S.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1440}}, audio:false});
+    vid.srcObject=S.stream; await vid.play();
+  }catch(e){ cs.textContent='Không mở được camera ('+(e.name||e)+'). Dùng nút "Ảnh có sẵn" hoặc cho phép camera trong cài đặt trình duyệt.'; cs.classList.remove('ok'); $('#shot').onclick=()=>$('#fileCam').click(); return; }
+  const small=document.createElement('canvas'); const sctx=small.getContext('2d',{willReadFrequently:true});
+  let stable=0, last=null, counting=false, lastQuad=null;
+  const capture=async()=>{
+    if(counting) return; counting=true;
+    const full=document.createElement('canvas'); full.width=vid.videoWidth; full.height=vid.videoHeight; full.getContext('2d').drawImage(vid,0,0);
+    stopCamera(); busy('Đang cắt và làm thẳng…');
+    try{ const p=await addCanvas(full); busy(null); S.queue.push(p); nextConfirm(); }catch(e){ busy(null); toast('Lỗi xử lý ảnh: '+(e.message||e)); S.view='list'; render(); }
+  };
+  $('#shot').onclick=capture;
+  const tick=()=>{
+    if(!vid.videoWidth) return;
+    const vw=vid.videoWidth, vh=vid.videoHeight; const k=Math.min(1,320/Math.max(vw,vh));
+    small.width=Math.round(vw*k); small.height=Math.round(vh*k); sctx.drawImage(vid,0,0,small.width,small.height);
+    let q=null; try{ q=regionCorners(small); }catch(e){}
+    // overlay sized to the displayed video box
+    const r=vid.getBoundingClientRect(), pr=vid.parentElement.getBoundingClientRect();
+    ov.width=r.width*devicePixelRatio; ov.height=r.height*devicePixelRatio; ov.style.width=r.width+'px'; ov.style.height=r.height+'px'; ov.style.left=(r.left-pr.left)+'px'; ov.style.top=(r.top-pr.top)+'px';
+    const c=ov.getContext('2d'); c.clearRect(0,0,ov.width,ov.height);
+    if(q){
+      const sx=ov.width/small.width, sy=ov.height/small.height;
+      c.beginPath(); q.forEach((p,i)=>{ i?c.lineTo(p.x*sx,p.y*sy):c.moveTo(p.x*sx,p.y*sy); }); c.closePath();
+      c.fillStyle='rgba(255,138,43,.18)'; c.fill(); c.lineWidth=3*devicePixelRatio; c.strokeStyle=stable>=3?'#5fc49b':'#ff8a2b'; c.stroke();
+      // stability: max corner movement relative to frame size
+      let mv=1; if(last){ mv=0; for(let i=0;i<4;i++) mv=Math.max(mv, Math.hypot(q[i].x-last[i].x, q[i].y-last[i].y)/Math.max(small.width,small.height)); }
+      last=q; stable = mv<0.015 ? stable+1 : 0;
+      if(S.autoShot){ const need=6; cs.textContent= stable>=need ? 'Chụp!' : stable>=2 ? 'Giữ yên… '+Math.max(0,need-stable) : 'Đã thấy giấy, giữ yên máy'; cs.classList.add('ok'); $('#shot').classList.toggle('counting',stable>=2); if(stable>=need) capture(); }
+      else { cs.textContent='Đã thấy giấy · bấm nút tròn để chụp'; cs.classList.add('ok'); }
+    } else { last=null; stable=0; cs.textContent='Chưa thấy giấy · đặt giấy trên nền tối, đủ sáng'; cs.classList.remove('ok'); $('#shot').classList.remove('counting'); }
+  };
+  S.camTimer=setInterval(tick,200);
+}
+
+/* ================= confirm ================= */
+function renderConfirm(){
+  const p=S.cur, left=S.queue.length;
+  $('#title').textContent='Giữ trang này?'; $('#subtitle').textContent='Đã tự dò mép và làm thẳng'+(left?` · còn ${left} ảnh chờ`:'');
+  main.innerHTML=`<div class="preview-wrap"><canvas id="pv"></canvas></div><p class="kv" id="pvinfo"></p>
+    <div class="section"><h2>Bộ lọc</h2>${chipsHtml('chips',p.filter)}</div><p class="hint">Mép dò chưa đúng? Bấm <b>Chỉnh góc</b> để kéo tay 4 góc.</p>`;
+  const show=()=>{ const pv=$('#pv'); const kk=Math.min(1,800/Math.max(p.out.width,p.out.height)); pv.width=p.out.width*kk; pv.height=p.out.height*kk; pv.getContext('2d').drawImage(p.out,0,0,pv.width,pv.height); $('#pvinfo').textContent=`Sau cắt: ${p.out.width} × ${p.out.height} px`; };
+  show();
+  $('#chips').onclick=e=>{ const f=e.target.dataset.f; if(!f) return; p.filter=f; [...$('#chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.f===f)); process(p); show(); };
+  footer.innerHTML=`<button id="bRetake" style="color:var(--warn)">Bỏ</button><button id="bEdit">Chỉnh góc</button><button class="primary" id="bKeep">Giữ trang</button><button class="primary" id="bKeepNext">Giữ &amp; chụp tiếp</button>`;
+  const keep=()=>{ delete p._new; S.pages.push(p); savePages(); toast('Đã thêm trang '+S.pages.length); };
+  $('#bKeep').onclick=()=>{ keep(); nextConfirm(); };
+  $('#bKeepNext').onclick=()=>{ keep(); if(S.queue.length) nextConfirm(); else { S.cur=null; S.view='camera'; render(); } };
+  $('#bRetake').onclick=()=>{ toast('Đã bỏ ảnh'); if(!S.queue.length && p._new){ S.cur=null; S.view='camera'; render(); } else nextConfirm(); };
+  $('#bEdit').onclick=()=>{ S.view='edit'; render(); };
+}
+
+/* ================= edit corners ================= */
+function renderEdit(){
+  const p=S.cur; $('#title').textContent=p._new?'Chỉnh góc':'Sửa trang'; $('#subtitle').textContent='Kéo 4 góc cam ôm sát mép giấy';
+  main.innerHTML=`<div class="stage" id="stage"><canvas id="cv"></canvas><svg id="ov" preserveAspectRatio="none"><polygon id="poly"></polygon>
+      ${[0,1,2,3].map(i=>`<circle class="hit" data-i="${i}" r="26"></circle><circle data-i="${i}" r="9"></circle>`).join('')}</svg></div>
+    <div class="toolbar"><button id="bAuto">Tự dò mép</button><button id="bFull">Toàn ảnh</button><button id="bRot">Xoay 90°</button></div>
+    <div class="section"><h2>Bộ lọc</h2>${chipsHtml('chips',p.filter)}</div>
+    <div class="section"><h2>Xem trước</h2><div class="preview-wrap"><canvas id="pv"></canvas></div><p class="kv" id="pvinfo"></p></div>`;
+  const cv=$('#cv'), ov=$('#ov'), poly=$('#poly'), stage=$('#stage'); const W=p.src.width,H=p.src.height;
+  const k=Math.min(1,900/Math.max(W,H)); cv.width=Math.round(W*k); cv.height=Math.round(H*k); cv.getContext('2d').drawImage(p.src,0,0,cv.width,cv.height);
+  ov.setAttribute('viewBox',`0 0 ${W} ${H}`); const circles=[...ov.querySelectorAll('circle')];
+  const draw=()=>{ poly.setAttribute('points',p.corners.map(c=>c.x+','+c.y).join(' ')); circles.forEach(ci=>{const c=p.corners[+ci.dataset.i]; ci.setAttribute('cx',c.x); ci.setAttribute('cy',c.y);}); };
+  const sizeHandles=()=>{ const r=stage.getBoundingClientRect(); const s=W/Math.max(1,r.width); circles.forEach(ci=>ci.setAttribute('r',(ci.classList.contains('hit')?26:9)*s)); };
+  let drag=null, previewT;
+  const toImg=e=>{ const r=cv.getBoundingClientRect(); return {x:Math.max(0,Math.min(W,(e.clientX-r.left)*W/r.width)), y:Math.max(0,Math.min(H,(e.clientY-r.top)*H/r.height))}; };
+  stage.addEventListener('pointerdown',e=>{ const pt=toImg(e); let best=-1,bd=Infinity; p.corners.forEach((c,i)=>{const d=Math.hypot(c.x-pt.x,c.y-pt.y); if(d<bd){bd=d;best=i;}}); const r=cv.getBoundingClientRect(); if(bd<40*W/r.width){ drag=best; stage.setPointerCapture(e.pointerId); } });
+  stage.addEventListener('pointermove',e=>{ if(drag===null) return; p.corners[drag]=toImg(e); draw(); clearTimeout(previewT); previewT=setTimeout(preview,250); });
+  const end=e=>{ if(drag!==null){ drag=null; try{stage.releasePointerCapture(e.pointerId);}catch(_){} preview(); } };
+  stage.addEventListener('pointerup',end); stage.addEventListener('pointercancel',end);
+  function preview(){ process(p); const pv=$('#pv'); const kk=Math.min(1,800/Math.max(p.out.width,p.out.height)); pv.width=p.out.width*kk; pv.height=p.out.height*kk; pv.getContext('2d').drawImage(p.out,0,0,pv.width,pv.height); $('#pvinfo').textContent=`Kích thước sau cắt: ${p.out.width} × ${p.out.height} px`; }
+  $('#bAuto').onclick=()=>{ p.corners=autoCorners(p.src); draw(); preview(); };
+  $('#bFull').onclick=()=>{ p.corners=[{x:0,y:0},{x:W,y:0},{x:W,y:H},{x:0,y:H}]; draw(); preview(); };
+  $('#bRot').onclick=()=>{ p.rot=(p.rot+90)%360; preview(); };
+  $('#chips').onclick=e=>{ const f=e.target.dataset.f; if(!f) return; p.filter=f; [...$('#chips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.f===f)); preview(); };
+  draw(); sizeHandles(); preview(); window.addEventListener('resize',sizeHandles,{once:true});
+  footer.innerHTML=`<button class="primary" id="bDone">${p._new?'Xong, xem lại':'Xong'}</button>`;
+  $('#bDone').onclick=()=>{ process(p); if(p._new){ S.view='confirm'; render(); } else { savePages(); S.cur=null; S.view='list'; render(); } };
+}
+
+/* ================= OCR (tesseract.js, runs on the phone) ================= */
+let ocrWorker=null;
+async function getOcrWorker(onProgress){
+  if(ocrWorker) return ocrWorker;
+  if(!window.Tesseract){ await new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'; s.onload=res; s.onerror=()=>rej(new Error('Không tải được thư viện OCR (cần mạng)')); document.head.appendChild(s); }); }
+  ocrWorker = await Tesseract.createWorker('vie+eng', 1, { logger: m=>{ if(onProgress) onProgress(m); } });
+  return ocrWorker;
+}
+function renderOcr(){
+  const p=S.cur, idx=S.pages.indexOf(p)+1;
+  $('#title').textContent='Đọc chữ · Trang '+idx; $('#subtitle').textContent='Nhận dạng chữ in (tiếng Việt / Anh)';
+  main.innerHTML=`<div class="preview-wrap"><canvas id="pv"></canvas></div>
+    <div class="section"><h2>Văn bản nhận được</h2><textarea id="ocrText" placeholder="Bấm “Đọc chữ” để bắt đầu…"></textarea></div>
+    <p class="hint" id="ocrHint">Lần đầu cần tải bộ nhận dạng (~15 MB, có mạng). Chữ in rõ nhận tốt; chữ viết tay nhận kém.</p>`;
+  const pv=$('#pv'); const kk=Math.min(1,600/Math.max(p.out.width,p.out.height)); pv.width=p.out.width*kk; pv.height=p.out.height*kk; pv.getContext('2d').drawImage(p.out,0,0,pv.width,pv.height);
+  const ta=$('#ocrText'); ta.value=p.ocr||''; ta.oninput=()=>{p.ocr=ta.value; savePages();};
+  footer.innerHTML=`<button class="primary" id="bRun">Đọc chữ</button><button id="bCopy">Sao chép</button><button id="bShareTxt">Chia sẻ chữ</button>`;
+  $('#bCopy').onclick=async()=>{ if(!ta.value){toast('Chưa có chữ để chép');return;} try{ await navigator.clipboard.writeText(ta.value); toast('Đã sao chép'); }catch(e){ ta.focus(); ta.select(); toast('Hãy bấm giữ để sao chép'); } };
+  $('#bShareTxt').onclick=async()=>{ if(!ta.value){toast('Chưa có chữ');return;} if(navigator.share){ try{ await navigator.share({title:S.docName, text:ta.value}); }catch(e){} } else toast('Máy này không hỗ trợ chia sẻ, hãy Sao chép'); };
+  $('#bRun').onclick=async()=>{
+    const btn=$('#bRun'); btn.disabled=true; btn.textContent='Đang đọc…';
+    try{
+      // OCR works best on a grayscale, upscaled page
+      const g=document.createElement('canvas'); const k=Math.min(2,2200/Math.max(p.out.width,p.out.height)); g.width=p.out.width*k; g.height=p.out.height*k; g.getContext('2d').drawImage(p.out,0,0,g.width,g.height);
+      const worker=await getOcrWorker(m=>{ if(m.status==='recognizing text') btn.textContent='Đang đọc… '+Math.round(m.progress*100)+'%'; else if(/load|init/.test(m.status)) btn.textContent='Đang tải bộ nhận dạng…'; });
+      const {data}=await worker.recognize(g);
+      p.ocr=(data.text||'').trim(); ta.value=p.ocr; savePages(); toast(p.ocr?'Đã đọc xong':'Không nhận ra chữ nào');
+    }catch(e){ toast('Không đọc được: '+(e.message||e), 4000); }
+    btn.disabled=false; btn.textContent='Đọc chữ';
+  };
+}
+
+/* ================= save / share ================= */
+const QUAL={light:{px:1100,q:0.5,kb:100}, medium:{px:1500,q:0.62,kb:200}, high:{px:2000,q:0.8,kb:450}};
+function renderSave(){
+  $('#title').textContent='Lưu / chia sẻ PDF'; $('#subtitle').textContent=S.pages.length+' trang · '+S.docName;
+  const fmt=kb=>kb<1000?kb+' KB':(kb/1000).toFixed(1)+' MB';
+  main.innerHTML=`
+    <div class="section" style="margin-top:0"><h2>Tên file</h2><input type="text" id="docName2"></div>
+    <div class="section"><h2>Dung lượng</h2><div class="chips" id="qchips">${[['light','Nhẹ'],['medium','Vừa'],['high','Rõ']].map(([k,l])=>`<button data-q="${k}" aria-pressed="${S.quality===k}">${l}</button>`).join('')}</div>
+      <p class="kv" id="est">Ước tính khoảng ${fmt(QUAL[S.quality].kb*S.pages.length)} cho ${S.pages.length} trang. Mức Vừa đủ rõ để đọc và đủ nhẹ để gửi.</p></div>
+    <div class="section"><h2>Chọn cách</h2><div class="card">
+      <div><b>Chia sẻ</b> – mở bảng chia sẻ của điện thoại: gửi Zalo, Mail, AirDrop, hoặc chọn <i>Lưu vào Tệp</i>.</div>
+      <div><b>Tải về</b> – lưu thẳng vào thư mục Tải về / Download của máy.</div></div></div>`;
+  const inp=$('#docName2'); inp.value=S.docName; inp.oninput=()=>{S.docName=inp.value||'Scan'; savePages();};
+  $('#qchips').onclick=e=>{ const k=e.target.dataset.q; if(!k) return; S.quality=k; savePages(); [...$('#qchips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.q===k)); $('#est').textContent=`Ước tính khoảng ${fmt(QUAL[k].kb*S.pages.length)} cho ${S.pages.length} trang. Mức Vừa đủ rõ để đọc và đủ nhẹ để gửi.`; };
+  const canShare = !!(navigator.share && navigator.canShare);
+  footer.innerHTML=`<button id="bBackList" style="flex:0 0 auto">Quay lại</button><button class="primary" id="bShare" ${canShare?'':'disabled'}>Chia sẻ</button><button class="primary" id="bDown">Tải về</button>`;
+  $('#bBackList').onclick=()=>{S.view='list';render();};
+  $('#bShare').onclick=()=>exportPdf('share'); $('#bDown').onclick=()=>exportPdf('download');
+}
+function buildPdf(){
+  const { jsPDF } = window.jspdf; const pdf=new jsPDF({unit:'mm',format:'a4',orientation:'portrait'}); const PW=210,PH=297,M=8; const Q=QUAL[S.quality]||QUAL.medium;
+  S.pages.forEach((p,i)=>{
+    const land=p.out.width>p.out.height;
+    if(i>0) pdf.addPage('a4',land?'landscape':'portrait'); else if(land){ pdf.deletePage(1); pdf.addPage('a4','landscape'); }
+    const pw=land?PH:PW, ph=land?PW:PH; const k=Math.min(1,Q.px/Math.max(p.out.width,p.out.height)); let img=p.out;
+    if(k<1){ img=document.createElement('canvas'); img.width=Math.round(p.out.width*k); img.height=Math.round(p.out.height*k); const c=img.getContext('2d'); c.imageSmoothingQuality='high'; c.drawImage(p.out,0,0,img.width,img.height); }
+    const r=Math.min((pw-2*M)/img.width,(ph-2*M)/img.height); const w=img.width*r,h=img.height*r;
+    pdf.addImage(img.toDataURL('image/jpeg',Q.q),'JPEG',(pw-w)/2,(ph-h)/2,w,h);
+  });
+  return pdf.output('blob');
+}
+async function exportPdf(mode){
+  if(!window.jspdf){ toast('Thư viện PDF chưa tải xong (cần mạng lần đầu), thử lại'); return; }
+  busy('Đang tạo PDF…');
+  try{
+    const blob=buildPdf(); busy(null);
+    const name=(S.docName||'Scan').replace(/[\\/:*?"<>|]+/g,'-').trim()+'.pdf';
+    const mb=blob.size>1048576?(blob.size/1048576).toFixed(1)+' MB':Math.round(blob.size/1024)+' KB';
+    const file=new File([blob],name,{type:'application/pdf'});
+    if(mode==='share' && navigator.canShare && navigator.canShare({files:[file]})){
+      try{ await navigator.share({files:[file], title:S.docName}); toast('Đã chia sẻ '+name+' · '+mb,3500); }
+      catch(e){ if(e&&e.name==='AbortError') toast('Đã huỷ chia sẻ'); else { toast('Máy không chia sẻ được file, chuyển sang Tải về'); download(blob,name); } }
+    } else { if(mode==='share') toast('Máy này không hỗ trợ chia sẻ file, đã chuyển sang Tải về'); download(blob,name); toast('Đã tải '+name+' · '+mb+' (xem thư mục Tải về)',4000); }
+  }catch(e){ busy(null); toast('Lưu thất bại: '+(e.message||e),4000); }
+}
+function download(blob,name){ const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{a.remove(); URL.revokeObjectURL(u);},4000); }
+
+/* ================= boot ================= */
+if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
+window.addEventListener('pagehide',stopCamera);
+(async()=>{ await loadPages(); render(); })();
+</script>
+</body>
+</html>
