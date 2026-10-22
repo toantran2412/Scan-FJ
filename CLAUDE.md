@@ -14,7 +14,7 @@
 5. Tên app là **"Scan FJ"** (đã chốt). Không đổi nếu Toàn không yêu cầu.
 
 ## Cách kiểm tra trước khi đẩy
-Máy của Toàn là **Windows**: chạy các lệnh dưới đây trong **PowerShell**, tại thư mục gốc repo (vd. `C:\dev\Scan-FJ`). Trên Windows gọi `python` (hoặc `py`), không phải `python3`. Cài một lần: `pip install playwright` rồi `python -m playwright install chromium`.
+Máy của Toàn là **Windows**: chạy các lệnh dưới đây trong **PowerShell**, tại thư mục gốc repo (vd. `C:\dev\Scan-FJ`). Trên Windows gọi `python` (hoặc `py`), không phải `python3`. Cài một lần: `pip install playwright pillow` rồi `python -m playwright install chromium`.
 
 ```powershell
 # 1. Kiểm tra cú pháp

@@ -58,11 +58,11 @@ IndexedDB `fresco-scan` phiên bản 2, hai store: `docs` (`id,name,created,orde
 
 ## Kiểm tra
 
-`tests/test_flow.py` (Playwright, Chromium headless, khung hình điện thoại 400×860): tạo 2 tài liệu từ một ảnh, giữ trang, xuất PDF, tải lại trang kiểm tra dữ liệu còn. Chạy trên Windows, trong **PowerShell**, tại thư mục gốc repo (dùng `python`, không phải `python3`):
+`tests/test_flow.py` (Playwright, Chromium headless, khung hình điện thoại 400×860): tạo 2 tài liệu từ một ảnh, giữ trang, xuất PDF, tải lại trang kiểm tra dữ liệu còn; rồi tự dựng **ảnh thử 2** bằng Pillow (tờ A4 có chữ xoay 11° nằm trên xấp giấy lớn hơn 3 % mỗi chiều, góc trên trái chạm tờ giấy khác, nền gỗ tối) và xác nhận 4 góc dò được lệch không quá 3 % khung so với 4 góc thật của tờ trên cùng. Chạy trên Windows, trong **PowerShell**, tại thư mục gốc repo (dùng `python`, không phải `python3`):
 
 ```powershell
 # Cài một lần
-pip install playwright
+pip install playwright pillow
 python -m playwright install chromium
 
 # Mỗi lần kiểm tra: bật máy chủ tạm ở cổng 8765, chạy test, tắt máy chủ
