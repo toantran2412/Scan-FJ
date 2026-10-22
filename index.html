@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
-<title>Fresco Scan</title>
+<title>Scan FJ</title>
 <meta name="description" content="Chụp tài liệu bằng điện thoại, tự dò mép, làm thẳng, xuất PDF và chia sẻ.">
 <meta name="theme-color" content="#1f5f4a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Fresco Scan">
+<meta name="apple-mobile-web-app-title" content="Scan FJ">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
@@ -92,7 +92,7 @@ footer button{flex:1 1 auto;min-width:0}
 </head>
 <body>
 <header>
-  <div><h1 id="title">Fresco Scan</h1><div class="sub" id="subtitle">Chụp tài liệu, cắt thẳng, xuất PDF</div></div>
+  <div><h1 id="title">Scan FJ</h1><div class="sub" id="subtitle">Chụp tài liệu, cắt thẳng, xuất PDF</div></div>
   <button class="ghost" id="btnBack" hidden>‹ Danh sách</button>
 </header>
 <main id="main"></main>
@@ -201,7 +201,10 @@ function squareToQuad(p){
 function warp(src, corners){
   const dist=(p,q)=>Math.hypot(p.x-q.x,p.y-q.y);
   let W=Math.round(Math.max(dist(corners[0],corners[1]),dist(corners[3],corners[2]))), H=Math.round(Math.max(dist(corners[0],corners[3]),dist(corners[1],corners[2])));
-  const k=Math.min(1,2000/Math.max(W,H)); W=Math.max(2,Math.round(W*k)); H=Math.max(2,Math.round(H*k));
+  // a sheet photographed at an angle comes out with a wrong ratio; when it is close to A4, snap to A4 (1:1.414)
+  const ar=W/H; const A4=1/Math.SQRT2;
+  if(ar>0.58&&ar<0.86) H=Math.round(W/A4); else if(ar>1.16&&ar<1.72) W=Math.round(H/A4);
+  const k=Math.min(1,2600/Math.max(W,H)); W=Math.max(2,Math.round(W*k)); H=Math.max(2,Math.round(H*k));
   const sd=src.getContext('2d',{willReadFrequently:true}).getImageData(0,0,src.width,src.height).data; const sw=src.width, sh=src.height;
   const out=document.createElement('canvas'); out.width=W; out.height=H; const octx=out.getContext('2d'); const od=octx.createImageData(W,H); const o=od.data; const M=squareToQuad(corners);
   for(let y=0;y<H;y++){ const v=(y+0.5)/H; for(let x=0;x<W;x++){ const u=(x+0.5)/W; const den=M[6]*u+M[7]*v+1;
@@ -225,7 +228,19 @@ function applyFilter(c, filter){
       for(let y=1;y<=h;y++){ let rs=0; for(let x=1;x<=w;x++){ rs+=g[(y-1)*w+(x-1)]; ii[y*(w+1)+x]=ii[(y-1)*(w+1)+x]+rs; } }
       for(let y=0;y<h;y++){ const y0=Math.max(0,y-r),y1=Math.min(h,y+r+1); for(let x=0;x<w;x++){ const x0=Math.max(0,x-r),x1=Math.min(w,x+r+1);
         const mean=(ii[y1*(w+1)+x1]-ii[y0*(w+1)+x1]-ii[y1*(w+1)+x0]+ii[y0*(w+1)+x0])/((y1-y0)*(x1-x0)); const i=y*w+x; const v=g[i]<mean*0.88?0:255; d[i*4]=d[i*4+1]=d[i*4+2]=v; } } }
-  } else if(filter==='enhance'){ for(let i=0;i<n*4;i++){ if((i&3)===3) continue; d[i]=Math.max(0,Math.min(255,(d[i]-128)*1.35+140)); } }
+  } else if(filter==='enhance'){
+    // scanner look: estimate the paper background per region (local 90th-percentile-ish via blurred max) and whiten it, keep ink dark, keep colour
+    const w=c.width,h=c.height; const g=new Uint8ClampedArray(n); for(let i=0;i<n;i++) g[i]=Math.max(d[i*4],d[i*4+1],d[i*4+2]);
+    const bs=Math.max(4,Math.round(Math.min(w,h)/60)); const bw=Math.ceil(w/bs), bh=Math.ceil(h/bs); const bg=new Float32Array(bw*bh);
+    for(let by=0;by<bh;by++) for(let bx=0;bx<bw;bx++){ // per block: mean of the brightest 30% pixels
+      const vals=[]; for(let y=by*bs;y<Math.min(h,(by+1)*bs);y++) for(let x=bx*bs;x<Math.min(w,(bx+1)*bs);x++) vals.push(g[y*w+x]);
+      vals.sort((a,b)=>b-a); let s=0; const m=Math.max(1,Math.round(vals.length*0.3)); for(let i=0;i<m;i++) s+=vals[i]; bg[by*bw+bx]=s/m; }
+    // smooth the block map twice (3x3) so the background changes gently
+    for(let it=0;it<2;it++){ const o=new Float32Array(bg); for(let by=0;by<bh;by++) for(let bx=0;bx<bw;bx++){ let s=0,cnt=0; for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){ const yy=by+dy,xx=bx+dx; if(yy<0||xx<0||yy>=bh||xx>=bw) continue; s+=bg[yy*bw+xx]; cnt++; } o[by*bw+bx]=s/cnt; } bg.set(o); }
+    for(let y=0;y<h;y++){ const fy=Math.min(bh-1,y/bs); const y0=fy|0, y1=Math.min(bh-1,y0+1), ty=fy-y0;
+      for(let x=0;x<w;x++){ const fx=Math.min(bw-1,x/bs); const x0=fx|0, x1=Math.min(bw-1,x0+1), tx=fx-x0;
+        const b=(bg[y0*bw+x0]*(1-tx)+bg[y0*bw+x1]*tx)*(1-ty)+(bg[y1*bw+x0]*(1-tx)+bg[y1*bw+x1]*tx)*ty; const gain=250/Math.max(40,b); const i=(y*w+x)*4;
+        for(let ch=0;ch<3;ch++){ let v=d[i+ch]*gain; v=(v-128)*1.15+128; d[i+ch]=v<0?0:v>255?255:v; } } } }
   ctx.putImageData(id,0,0); return c;
 }
 function rotateCanvas(c, rot){ if(!rot) return c; const r=document.createElement('canvas'); const swap=rot%180!==0; r.width=swap?c.height:c.width; r.height=swap?c.width:c.height; const ctx=r.getContext('2d'); ctx.translate(r.width/2,r.height/2); ctx.rotate(rot*Math.PI/180); ctx.drawImage(c,-c.width/2,-c.height/2); return r; }
@@ -254,7 +269,7 @@ const FILTERS=[['enhance','Rõ nét'],['bw','Đen trắng'],['gray','Xám'],['no
 const chipsHtml=(id,cur)=>`<div class="chips" id="${id}">${FILTERS.map(([k,l])=>`<button data-f="${k}" aria-pressed="${cur===k}">${l}</button>`).join('')}</div>`;
 
 function renderList(){
-  $('#title').textContent='Fresco Scan'; $('#subtitle').textContent=S.pages.length?S.pages.length+' trang · '+S.docName:'Chụp tài liệu, cắt thẳng, xuất PDF';
+  $('#title').textContent='Scan FJ'; $('#subtitle').textContent=S.pages.length?S.pages.length+' trang · '+S.docName:'Chụp tài liệu, cắt thẳng, xuất PDF';
   main.innerHTML='';
   if(!S.pages.length){
     main.innerHTML=`<div class="empty"><strong>Chưa có trang nào</strong>Bấm <b>Chụp</b> để mở camera: đưa tờ giấy vào khung, app tự dò mép và tự chụp khi giấy đứng yên.<br><span class="hint">Mỗi trang được cắt thẳng, lọc rõ chữ, rồi hỏi bạn có giữ không. Xong thì ghép thành PDF để lưu hoặc gửi Zalo / Mail.</span></div>`;
@@ -298,7 +313,7 @@ async function renderCamera(){
   $('#bFile').onclick=()=>$('#fileLib').click();
   const vid=$('#vid'), ov=$('#ov'), cs=$('#cs');
   try{
-    S.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1440}}, audio:false});
+    S.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:4032}, height:{ideal:3024}}, audio:false});
     vid.srcObject=S.stream; await vid.play();
   }catch(e){ cs.textContent='Không mở được camera ('+(e.name||e)+'). Dùng nút "Ảnh có sẵn" hoặc cho phép camera trong cài đặt trình duyệt.'; cs.classList.remove('ok'); $('#shot').onclick=()=>$('#fileCam').click(); return; }
   const small=document.createElement('canvas'); const sctx=small.getContext('2d',{willReadFrequently:true});
@@ -412,7 +427,7 @@ function renderOcr(){
 }
 
 /* ================= save / share ================= */
-const QUAL={light:{px:1100,q:0.5,kb:100}, medium:{px:1500,q:0.62,kb:200}, high:{px:2000,q:0.8,kb:450}};
+const QUAL={light:{px:1300,q:0.5,kb:120}, medium:{px:1800,q:0.65,kb:260}, high:{px:2600,q:0.8,kb:600}};
 function renderSave(){
   $('#title').textContent='Lưu / chia sẻ PDF'; $('#subtitle').textContent=S.pages.length+' trang · '+S.docName;
   const fmt=kb=>kb<1000?kb+' KB':(kb/1000).toFixed(1)+' MB';
@@ -421,14 +436,16 @@ function renderSave(){
     <div class="section"><h2>Dung lượng</h2><div class="chips" id="qchips">${[['light','Nhẹ'],['medium','Vừa'],['high','Rõ']].map(([k,l])=>`<button data-q="${k}" aria-pressed="${S.quality===k}">${l}</button>`).join('')}</div>
       <p class="kv" id="est">Ước tính khoảng ${fmt(QUAL[S.quality].kb*S.pages.length)} cho ${S.pages.length} trang. Mức Vừa đủ rõ để đọc và đủ nhẹ để gửi.</p></div>
     <div class="section"><h2>Chọn cách</h2><div class="card">
-      <div><b>Chia sẻ</b> – mở bảng chia sẻ của điện thoại: gửi Zalo, Mail, AirDrop, hoặc chọn <i>Lưu vào Tệp</i>.</div>
-      <div><b>Tải về</b> – lưu thẳng vào thư mục Tải về / Download của máy.</div></div></div>`;
+      <div><b>Chia sẻ / Lưu vào Tệp</b> – mở bảng chia sẻ của điện thoại với đúng 1 file PDF: gửi Zalo, Mail, AirDrop, hoặc chọn <i>Lưu vào Tệp</i>.</div>
+      <div class="hint">Trên máy tính hoặc trình duyệt không hỗ trợ chia sẻ file, nút sẽ là <b>Tải về</b> (lưu vào thư mục Download).</div></div></div>`;
   const inp=$('#docName2'); inp.value=S.docName; inp.oninput=()=>{S.docName=inp.value||'Scan'; savePages();};
   $('#qchips').onclick=e=>{ const k=e.target.dataset.q; if(!k) return; S.quality=k; savePages(); [...$('#qchips').children].forEach(b=>b.setAttribute('aria-pressed',b.dataset.q===k)); $('#est').textContent=`Ước tính khoảng ${fmt(QUAL[k].kb*S.pages.length)} cho ${S.pages.length} trang. Mức Vừa đủ rõ để đọc và đủ nhẹ để gửi.`; };
-  const canShare = !!(navigator.share && navigator.canShare);
-  footer.innerHTML=`<button id="bBackList" style="flex:0 0 auto">Quay lại</button><button class="primary" id="bShare" ${canShare?'':'disabled'}>Chia sẻ</button><button class="primary" id="bDown">Tải về</button>`;
+  const canShare = !!(navigator.share && navigator.canShare && navigator.canShare({files:[new File(['x'],'x.pdf',{type:'application/pdf'})]}));
+  footer.innerHTML=`<button id="bBackList" style="flex:0 0 auto">Quay lại</button>` + (canShare
+    ? `<button class="primary" id="bShare">Chia sẻ / Lưu vào Tệp</button>`
+    : `<button class="primary" id="bDown">Tải về</button>`);
   $('#bBackList').onclick=()=>{S.view='list';render();};
-  $('#bShare').onclick=()=>exportPdf('share'); $('#bDown').onclick=()=>exportPdf('download');
+  const bs=$('#bShare'); if(bs) bs.onclick=()=>exportPdf('share'); const bd=$('#bDown'); if(bd) bd.onclick=()=>exportPdf('download');
 }
 function buildPdf(){
   const { jsPDF } = window.jspdf; const pdf=new jsPDF({unit:'mm',format:'a4',orientation:'portrait'}); const PW=210,PH=297,M=8; const Q=QUAL[S.quality]||QUAL.medium;
@@ -437,7 +454,9 @@ function buildPdf(){
     if(i>0) pdf.addPage('a4',land?'landscape':'portrait'); else if(land){ pdf.deletePage(1); pdf.addPage('a4','landscape'); }
     const pw=land?PH:PW, ph=land?PW:PH; const k=Math.min(1,Q.px/Math.max(p.out.width,p.out.height)); let img=p.out;
     if(k<1){ img=document.createElement('canvas'); img.width=Math.round(p.out.width*k); img.height=Math.round(p.out.height*k); const c=img.getContext('2d'); c.imageSmoothingQuality='high'; c.drawImage(p.out,0,0,img.width,img.height); }
-    const r=Math.min((pw-2*M)/img.width,(ph-2*M)/img.height); const w=img.width*r,h=img.height*r;
+    // a page already snapped to A4 fills the sheet edge to edge; anything else is centred with a small margin
+    const ar=img.width/img.height, isA4=Math.abs(ar-(land?Math.SQRT2:1/Math.SQRT2))<0.01; const m=isA4?0:M;
+    const r=Math.min((pw-2*m)/img.width,(ph-2*m)/img.height); const w=img.width*r,h=img.height*r;
     pdf.addImage(img.toDataURL('image/jpeg',Q.q),'JPEG',(pw-w)/2,(ph-h)/2,w,h);
   });
   return pdf.output('blob');

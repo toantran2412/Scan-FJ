@@ -1,6 +1,6 @@
 {
-  "name": "Fresco Scan",
-  "short_name": "Fresco Scan",
+  "name": "Scan FJ",
+  "short_name": "Scan FJ",
   "description": "Chụp tài liệu, tự cắt thẳng, xuất PDF",
   "start_url": "./index.html",
   "scope": "./",
